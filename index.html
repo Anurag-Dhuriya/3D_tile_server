@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Building Viewer</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #viewer { width: 100%; height: 100vh; }
+
+    #controls {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #path-box {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(26, 42, 58, 0.92);
+      border: 1px solid #4a6a8a;
+      border-radius: 8px;
+      padding: 12px;
+      width: 360px;
+    }
+
+    #path-box label {
+      color: #aac8e0;
+      font-size: 12px;
+      font-family: sans-serif;
+    }
+
+    #path-box input[type="text"],
+    #path-box input[type="number"] {
+      padding: 8px 10px;
+      border-radius: 5px;
+      border: 1px solid #4a6a8a;
+      background: #0d1b2a;
+      color: white;
+      font-size: 13px;
+      font-family: monospace;
+      width: 100%;
+    }
+
+    #path-box input:focus {
+      outline: none;
+      border-color: #6a9ab0;
+    }
+
+    #load-btn {
+      padding: 9px;
+      background: #1a4a6a;
+      color: white;
+      border: 1px solid #4a9aba;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 8px;
+    }
+
+    #load-btn:hover { background: #2a5a7a; }
+
+    #controls button {
+      padding: 10px 18px;
+      background: #1a2a3a;
+      color: white;
+      border: 1px solid #4a6a8a;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      width: 360px;
+      text-align: center;
+      transition: background 0.2s;
+    }
+
+    #controls button:hover { background: #2a3a4a; }
+
+    #status {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      z-index: 999;
+      background: rgba(26, 42, 58, 0.85);
+      color: #aac8e0;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: sans-serif;
+      border: 1px solid #4a6a8a;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="viewer"></div>
+
+  <div id="controls">
+    <div id="path-box">
+
+      <label>GLB file URL</label>
+      <input
+        type="text"
+        id="glb-url"
+        placeholder="http://localhost:8080/models/building_clean.glb"
+      />
+
+      <label style="margin-top:6px">Longitude</label>
+      <input
+        type="number"
+        id="input-lon"
+        placeholder="e.g. 72.5714"
+        step="any"
+      />
+
+      <label style="margin-top:6px">Latitude</label>
+      <input
+        type="number"
+        id="input-lat"
+        placeholder="e.g. 23.0225"
+        step="any"
+      />
+
+      <label style="margin-top:6px">Height above ground (meters)</label>
+      <input
+        type="number"
+        id="input-height"
+        placeholder="e.g. 0"
+        value="0"
+        step="any"
+      />
+
+      <button id="load-btn" onclick="loadModel()">Load Model</button>
+
+    </div>
+
+    <button onclick="goToBuilding()">Go to Building</button>
+    <button onclick="goToGlobe()">Globe Overview</button>
+  </div>
+
+  <div id="status" style="display:none"></div>
+
+  <script>
+
+    Cesium.Ion.defaultAccessToken = undefined;
+
+    const viewer = new Cesium.Viewer('viewer', {
+      imageryProvider: new Cesium.TileMapServiceImageryProvider({
+        url: Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII')
+      }),
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      animation: false,
+      timeline: false,
+      requestRenderMode: false
+    });
+
+    viewer.scene.globe.enableLighting = false;
+
+    let currentModel = null;
+
+    function setStatus(msg, isError) {
+      const el = document.getElementById('status');
+      el.style.display = 'block';
+      el.style.color = isError ? '#e07a7a' : '#aac8e0';
+      el.textContent = msg;
+    }
+
+    function goToBuilding() {
+      if (!currentModel) {
+        setStatus('No model loaded yet', true);
+        return;
+      }
+      viewer.zoomTo(
+        currentModel,
+        new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(0),
+          Cesium.Math.toRadians(-30),
+          100
+        )
+      );
+    }
+
+    function goToGlobe() {
+      viewer.camera.flyHome(1.5);
+    }
+
+    async function loadModel() {
+      const glbUrl = document.getElementById('glb-url').value.trim();
+      const lon    = parseFloat(document.getElementById('input-lon').value);
+      const lat    = parseFloat(document.getElementById('input-lat').value);
+      const height = parseFloat(document.getElementById('input-height').value) || 0;
+
+      // Validate inputs
+      if (!glbUrl) {
+        setStatus('Please enter a GLB URL', true);
+        return;
+      }
+      if (!glbUrl.startsWith('http')) {
+        setStatus('URL must start with http:// or https://', true);
+        return;
+      }
+      if (isNaN(lon) || isNaN(lat)) {
+        setStatus('Please enter valid longitude and latitude', true);
+        return;
+      }
+
+      // Remove previous model
+      if (currentModel) {
+        viewer.scene.primitives.remove(currentModel);
+        currentModel = null;
+      }
+
+      setStatus('Step 1/3 — Downloading model...');
+
+      try {
+        const res = await fetch('http://localhost:8080/convert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ glb_url: glbUrl, lon, lat, height })
+        });
+
+        setStatus('Step 2/3 — Converting to 3D tiles...');
+
+        const result = await res.json();
+
+        if (!res.ok) {
+          setStatus('Error: ' + result.error, true);
+          return;
+        }
+
+        setStatus('Step 3/3 — Loading into viewer...');
+
+        currentModel = await Cesium.Cesium3DTileset.fromUrl(
+          result.tileset_url
+        );
+
+        viewer.scene.primitives.add(currentModel);
+
+        await viewer.zoomTo(
+          currentModel,
+          new Cesium.HeadingPitchRange(
+            Cesium.Math.toRadians(0),
+            Cesium.Math.toRadians(-30),
+            100
+          )
+        );
+
+        setStatus('Model loaded — ' + result.model_name);
+
+        setTimeout(() => {
+          document.getElementById('status').style.display = 'none';
+        }, 3000);
+
+      } catch (error) {
+        setStatus('Error: ' + error.message, true);
+        console.error(error);
+      }
+    }
+
+    // Press Enter to load
+    document.getElementById('glb-url').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') loadModel();
+    });
+
+  </script>
+</body>
+</html>

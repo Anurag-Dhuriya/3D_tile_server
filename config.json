@@ -1,0 +1,42 @@
+{
+  "port": 8080,
+  "host": "0.0.0.0",
+  "models": [
+    {
+      "name": "sample",
+      "file": "sample.obj",
+      "unit": "cm",
+      "lon": 72.5714,
+      "lat": 23.0225,
+      "height": 0,
+      "status": "ready",
+      "tileset_url": "http://localhost:8080/tiles/sample/tileset.json",
+      "error": null,
+      "processed_at": "2026-03-31 11:45:32"
+    },
+    {
+      "name": "building2",
+      "file": "building2.obj",
+      "unit": "cm",
+      "lon": 72.58,
+      "lat": 23.03,
+      "height": 0.0,
+      "status": "ready",
+      "tileset_url": "http://localhost:8080/tiles/building2/tileset.json",
+      "error": null,
+      "processed_at": "2026-03-31 18:19:51"
+    },
+    {
+      "name": "building3",
+      "file": "building3.obj",
+      "unit": "cm",
+      "lon": 72.59,
+      "lat": 23.04,
+      "height": 0.0,
+      "status": "ready",
+      "tileset_url": "http://localhost:8080/tiles/building3/tileset.json",
+      "error": null,
+      "processed_at": "2026-03-31 18:25:08"
+    }
+  ]
+}

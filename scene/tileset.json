@@ -1,0 +1,89 @@
+{
+  "asset": {
+    "version": "1.0"
+  },
+  "geometricError": 200.0,
+  "root": {
+    "boundingVolume": {
+      "region": [
+        1.2665226063192132,
+        0.4017215612669088,
+        1.2670217704852837,
+        0.40222072543297926,
+        0.0,
+        300.0
+      ]
+    },
+    "geometricError": 100.0,
+    "refine": "ADD",
+    "children": [
+      {
+        "boundingVolume": {
+          "region": [
+            1.2665226063192132,
+            0.4017215612669088,
+            1.2670217704852837,
+            0.40222072543297926,
+            0.0,
+            300.0
+          ]
+        },
+        "geometricError": 100.0,
+        "refine": "ADD",
+        "children": [
+          {
+            "boundingVolume": {
+              "region": [
+                1.2666088133765094,
+                0.40181727047455856,
+                1.2666109321871162,
+                0.4018195836062305,
+                0.0,
+                10.0
+              ]
+            },
+            "geometricError": 58.600650787353516,
+            "refine": "REPLACE",
+            "content": {
+              "uri": "../tiles/sample/tileset.json"
+            }
+          },
+          {
+            "boundingVolume": {
+              "region": [
+                1.266759756696719,
+                0.4019491179470964,
+                1.2667601854982495,
+                0.4019495355214918,
+                0.0,
+                10.0
+              ]
+            },
+            "geometricError": 20.0,
+            "refine": "REPLACE",
+            "content": {
+              "uri": "../tiles/building2/tileset.json"
+            }
+          },
+          {
+            "boundingVolume": {
+              "region": [
+                1.2669328002685967,
+                0.4021222807475594,
+                1.2669362077767712,
+                0.40212543857142763,
+                0.0,
+                11.807171821594238
+              ]
+            },
+            "geometricError": 80.0,
+            "refine": "REPLACE",
+            "content": {
+              "uri": "../tiles/building3/tileset.json"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

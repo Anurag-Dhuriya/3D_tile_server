@@ -12,7 +12,7 @@
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/sample/tileset.json",
       "error": null,
-      "processed_at": "2026-03-31 11:45:32"
+      "processed_at": "2026-04-04 13:47:46"
     },
     {
       "name": "building2",
@@ -20,11 +20,11 @@
       "unit": "cm",
       "lon": 72.58,
       "lat": 23.03,
-      "height": 0.0,
+      "height": 0,
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/building2/tileset.json",
       "error": null,
-      "processed_at": "2026-03-31 18:19:51"
+      "processed_at": "2026-04-04 13:47:54"
     },
     {
       "name": "building3",
@@ -32,11 +32,11 @@
       "unit": "cm",
       "lon": 72.59,
       "lat": 23.04,
-      "height": 0.0,
+      "height": 0,
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/building3/tileset.json",
       "error": null,
-      "processed_at": "2026-03-31 18:25:08"
+      "processed_at": "2026-04-04 13:48:02"
     }
   ]
 }

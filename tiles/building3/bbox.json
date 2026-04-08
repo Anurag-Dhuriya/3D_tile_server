@@ -1,5 +1,39 @@
 {
-  "width": 20.0,
-  "depth": 20.0,
-  "height": 11.807171821594238
+  "bbox": {
+    "width": 20.0,
+    "depth": 20.0,
+    "height": 11.807171821594238
+  },
+  "lod_plan": [
+    {
+      "name": "lod0",
+      "ratio": 0.1296,
+      "target_faces": 100,
+      "geometric_error": 12.26
+    },
+    {
+      "name": "lod1",
+      "ratio": 0.3702,
+      "target_faces": 144,
+      "geometric_error": 6.743
+    },
+    {
+      "name": "lod2",
+      "ratio": 0.6561,
+      "target_faces": 255,
+      "geometric_error": 3.065
+    },
+    {
+      "name": "lod3",
+      "ratio": 0.8493,
+      "target_faces": 330,
+      "geometric_error": 1.226
+    },
+    {
+      "name": "lod4",
+      "ratio": 1.0,
+      "target_faces": 389,
+      "geometric_error": 0.0
+    }
+  ]
 }

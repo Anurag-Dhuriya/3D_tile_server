@@ -12,7 +12,9 @@
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/sample/tileset.json",
       "error": null,
-      "processed_at": "2026-04-04 13:47:46"
+      "processed_at": "2026-04-08 23:17:49",
+      "processing_started_at": 1775670456.695318,
+      "processing_duration_sec": 12.72
     },
     {
       "name": "building2",
@@ -24,7 +26,9 @@
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/building2/tileset.json",
       "error": null,
-      "processed_at": "2026-04-04 13:47:54"
+      "processed_at": "2026-04-08 23:18:00",
+      "processing_started_at": 1775670469.420768,
+      "processing_duration_sec": 11.26
     },
     {
       "name": "building3",
@@ -36,7 +40,9 @@
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/building3/tileset.json",
       "error": null,
-      "processed_at": "2026-04-04 13:48:02"
+      "processed_at": "2026-04-08 23:18:09",
+      "processing_started_at": 1775670480.6831949,
+      "processing_duration_sec": 8.66
     }
   ]
 }

@@ -2,7 +2,7 @@
   "asset": {
     "version": "1.0"
   },
-  "geometricError": 40.0,
+  "geometricError": 5.704,
   "root": {
     "boundingVolume": {
       "box": [
@@ -20,7 +20,7 @@
         1.2166388034820557
       ]
     },
-    "geometricError": 20.0,
+    "geometricError": 2.852,
     "refine": "REPLACE",
     "content": {
       "uri": "lod0/content.b3dm"
@@ -43,7 +43,7 @@
             1.2166388034820557
           ]
         },
-        "geometricError": 5.0,
+        "geometricError": 1.755,
         "refine": "REPLACE",
         "content": {
           "uri": "lod1/content.b3dm"
@@ -66,7 +66,7 @@
                 1.2166388034820557
               ]
             },
-            "geometricError": 1.3223485946655273,
+            "geometricError": 0.965,
             "refine": "REPLACE",
             "content": {
               "uri": "lod2/content.b3dm"
@@ -89,11 +89,61 @@
                     1.2166388034820557
                   ]
                 },
-                "geometricError": 0.0,
+                "geometricError": 0.439,
                 "refine": "REPLACE",
                 "content": {
                   "uri": "lod3/content.b3dm"
-                }
+                },
+                "children": [
+                  {
+                    "boundingVolume": {
+                      "box": [
+                        0.0,
+                        0.0,
+                        1.2166388034820557,
+                        1.2584954500198364,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.3223485946655273,
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.2166388034820557
+                      ]
+                    },
+                    "geometricError": 0.176,
+                    "refine": "REPLACE",
+                    "content": {
+                      "uri": "lod4/content.b3dm"
+                    },
+                    "children": [
+                      {
+                        "boundingVolume": {
+                          "box": [
+                            0.0,
+                            0.0,
+                            1.2166388034820557,
+                            1.2584954500198364,
+                            0.0,
+                            0.0,
+                            0.0,
+                            1.3223485946655273,
+                            0.0,
+                            0.0,
+                            0.0,
+                            1.2166388034820557
+                          ]
+                        },
+                        "geometricError": 0.0,
+                        "refine": "REPLACE",
+                        "content": {
+                          "uri": "lod5/content.b3dm"
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             ]
           }

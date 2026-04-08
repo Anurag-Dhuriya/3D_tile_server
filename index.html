@@ -201,7 +201,7 @@
       font-size: 12px;
       font-family: sans-serif;
       border: 1px solid #4a6a8a;
-      max-width: 380px;
+      max-width: 420px;
       display: none;
     }
 
@@ -343,21 +343,74 @@
 
       let tiles = 0;
       for (const ts of Object.values(loadedTilesets)) {
-        try { tiles += ts.statistics ? ts.statistics.numberOfTilesWithContentReady : 0; }
-        catch(e) {}
+        try {
+          tiles += ts.statistics ? ts.statistics.numberOfTilesWithContentReady : 0;
+        } catch (e) {}
       }
       document.getElementById('stat-tiles').textContent = tiles > 0 ? tiles : '—';
     }
 
     setInterval(updateStats, 1000);
 
+    async function waitForVisibleTiles(tileset, timeoutMs = 10000) {
+      return new Promise((resolve) => {
+        let done = false;
+
+        function finish() {
+          if (done) return;
+          done = true;
+          try {
+            tileset.allTilesLoaded.removeEventListener(onLoaded);
+          } catch (e) {}
+          resolve();
+        }
+
+        function onLoaded() {
+          finish();
+        }
+
+        try {
+          tileset.allTilesLoaded.addEventListener(onLoaded);
+        } catch (e) {
+          finish();
+          return;
+        }
+
+        setTimeout(finish, timeoutMs);
+      });
+    }
+
+    async function getAllModels() {
+      const res = await fetch(`${BASE_URL}/api/models`);
+      const data = await res.json();
+      return data.models || [];
+    }
+
+    async function getModelStatus(name) {
+      const res = await fetch(`${BASE_URL}/api/models/${name}/status`);
+      if (!res.ok) return null;
+      return await res.json();
+    }
+
+    function clearLoadedTilesets() {
+      for (const [name, tileset] of Object.entries(loadedTilesets)) {
+        try {
+          viewer.scene.primitives.remove(tileset);
+        } catch (e) {}
+        delete loadedTilesets[name];
+      }
+    }
+
     async function loadScene() {
+      const loadStart = performance.now();
       setStatus('Loading scene tileset...');
       const url = `${BASE_URL}/scene/tileset.json`;
 
       try {
         const res = await fetch(url);
-        if (!res.ok) throw new Error(`scene/tileset.json returned ${res.status} — run /api/rebuild/scene first`);
+        if (!res.ok) {
+          throw new Error(`scene/tileset.json returned ${res.status} — run /api/rebuild/scene first`);
+        }
 
         const data = await res.json();
 
@@ -366,7 +419,7 @@
           data.root.children.forEach(cell => {
             cell.children && cell.children.forEach(() => modelCount++);
           });
-        } catch(e) {}
+        } catch (e) {}
 
         if (loadedTilesets['__scene__']) {
           viewer.scene.primitives.remove(loadedTilesets['__scene__']);
@@ -386,7 +439,7 @@
             lon: (reg[0] + reg[2]) / 2 * 180 / Math.PI,
             lat: (reg[1] + reg[3]) / 2 * 180 / Math.PI
           };
-        } catch(e) {}
+        } catch (e) {}
 
         const sceneEl = document.getElementById('scene-status');
         sceneEl.style.display = 'block';
@@ -394,8 +447,25 @@
 
         setStatus(`Scene loaded — ${modelCount || '?'} model(s)`);
         await flyToScene();
+        await waitForVisibleTiles(tileset);
 
-      } catch(err) {
+        const viewerLoadSec = ((performance.now() - loadStart) / 1000).toFixed(2);
+        console.log(`[Timing] Scene viewer load: ${viewerLoadSec}s`);
+
+        try {
+          const models = await getAllModels();
+          const ready = models.filter(m => m.status === 'ready' && m.processing_started_at);
+
+          if (ready.length > 0) {
+            const earliestStartMs = Math.min(...ready.map(m => m.processing_started_at * 1000));
+            const endToEndSec = ((Date.now() - earliestStartMs) / 1000).toFixed(2);
+            console.log(`[Timing] Scene end-to-end (approx): ${endToEndSec}s`);
+          }
+        } catch (e) {
+          console.warn('Could not compute scene end-to-end timing', e);
+        }
+
+      } catch (err) {
         setStatus('Error: ' + err.message, true);
         console.error(err);
       }
@@ -413,7 +483,7 @@
             )
           );
           return;
-        } catch(e) {}
+        } catch (e) {}
       }
 
       if (sceneCenter) {
@@ -441,6 +511,7 @@
     }
 
     async function loadSingleModel(name, tilesetUrl) {
+      const loadStart = performance.now();
       setStatus(`Loading ${name}...`);
 
       if (loadedTilesets['__scene__']) {
@@ -457,7 +528,7 @@
         const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl);
         viewer.scene.primitives.add(tileset);
         loadedTilesets[name] = tileset;
-        setStatus(`${name} loaded`);
+
         await viewer.zoomTo(
           tileset,
           new Cesium.HeadingPitchRange(
@@ -466,7 +537,27 @@
             200
           )
         );
-      } catch(err) {
+
+        await waitForVisibleTiles(tileset);
+
+        const viewerLoadSec = ((performance.now() - loadStart) / 1000).toFixed(2);
+        console.log(`[Timing] Viewer load for ${name}: ${viewerLoadSec}s`);
+
+        try {
+          const modelInfo = await getModelStatus(name);
+          if (modelInfo && modelInfo.processing_started_at) {
+            const endToEndSec = ((Date.now() - modelInfo.processing_started_at * 1000) / 1000).toFixed(2);
+            console.log(`[Timing] End-to-end for ${name}: ${endToEndSec}s`);
+          }
+          if (modelInfo && modelInfo.processing_duration_sec != null) {
+            console.log(`[Timing] Backend pipeline for ${name}: ${modelInfo.processing_duration_sec}s`);
+          }
+        } catch (e) {
+          console.warn(`Could not compute timing for ${name}`, e);
+        }
+
+        setStatus(`${name} loaded`);
+      } catch (err) {
         setStatus(`Error loading ${name}: ` + err.message, true);
         console.error(err);
       }
@@ -517,9 +608,9 @@
           )
         );
 
+        await waitForVisibleTiles(tileset);
         setStatus(`${name} loaded`);
-
-      } catch(err) {
+      } catch (err) {
         setStatus('Error: ' + err.message, true);
         console.error(err);
       }
@@ -548,21 +639,12 @@
             </div>`;
         }).join('');
 
-      } catch(err) {
+      } catch (err) {
         list.innerHTML = '<div style="color:#e07a7a;font-size:11px;font-family:sans-serif">Could not reach server</div>';
       }
     }
 
     refreshModels();
-
-    function clearLoadedTilesets() {
-      for (const [name, tileset] of Object.entries(loadedTilesets)) {
-        try {
-          viewer.scene.primitives.remove(tileset);
-        } catch (e) {}
-        delete loadedTilesets[name];
-      }
-    }
 
     document.getElementById('glb-url').addEventListener('keydown', e => {
       if (e.key === 'Enter') loadGlbUrl();

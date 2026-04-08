@@ -2,7 +2,7 @@
   "asset": {
     "version": "1.0"
   },
-  "geometricError": 160.0,
+  "geometricError": 24.52,
   "root": {
     "boundingVolume": {
       "box": [
@@ -20,7 +20,7 @@
         5.903585910797119
       ]
     },
-    "geometricError": 80.0,
+    "geometricError": 12.26,
     "refine": "REPLACE",
     "content": {
       "uri": "lod0/content.b3dm"
@@ -43,7 +43,7 @@
             5.903585910797119
           ]
         },
-        "geometricError": 30.0,
+        "geometricError": 6.743,
         "refine": "REPLACE",
         "content": {
           "uri": "lod1/content.b3dm"
@@ -66,7 +66,7 @@
                 5.903585910797119
               ]
             },
-            "geometricError": 10.0,
+            "geometricError": 3.065,
             "refine": "REPLACE",
             "content": {
               "uri": "lod2/content.b3dm"
@@ -89,11 +89,36 @@
                     5.903585910797119
                   ]
                 },
-                "geometricError": 0.0,
+                "geometricError": 1.226,
                 "refine": "REPLACE",
                 "content": {
                   "uri": "lod3/content.b3dm"
-                }
+                },
+                "children": [
+                  {
+                    "boundingVolume": {
+                      "box": [
+                        0.0,
+                        0.0,
+                        5.903585910797119,
+                        10.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        10.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        5.903585910797119
+                      ]
+                    },
+                    "geometricError": 0.0,
+                    "refine": "REPLACE",
+                    "content": {
+                      "uri": "lod4/content.b3dm"
+                    }
+                  }
+                ]
               }
             ]
           }

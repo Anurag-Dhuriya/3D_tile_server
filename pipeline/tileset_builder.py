@@ -6,22 +6,18 @@ from .geo import east_north_up_transform, meters_to_lat_delta, meters_to_lon_del
 from .quadtree import build_quadtree
 
 
-LOD_LEVELS = ["lod0", "lod1", "lod2", "lod3"]
-
-
-def model_lod_errors(bbox):
+def fallback_lod_plan(bbox):
     size = max(
         float(bbox.get("width", 0.0)),
         float(bbox.get("depth", 0.0)),
         float(bbox.get("height", 0.0)),
         1.0,
     )
-    return {
-        "lod0": max(20.0, size * 4.0),
-        "lod1": max(5.0, size * 1.5),
-        "lod2": max(1.0, size * 0.5),
-        "lod3": 0.0,
-    }
+    return [
+        {"name": "lod0", "ratio": 0.15, "target_faces": 0, "geometric_error": max(20.0, size * 4.0)},
+        {"name": "lod1", "ratio": 0.45, "target_faces": 0, "geometric_error": max(5.0, size * 1.5)},
+        {"name": "lod2", "ratio": 1.0, "target_faces": 0, "geometric_error": 0.0},
+    ]
 
 
 def make_box_bounding_volume(bbox):
@@ -43,19 +39,22 @@ def make_box_bounding_volume(bbox):
     }
 
 
-def build_model_tileset(output_folder, b3dm_map, bbox, lon, lat, height):
-    errors = model_lod_errors(bbox)
+def build_model_tileset(output_folder, b3dm_map, bbox, lon, lat, height, lod_plan):
+    if not lod_plan:
+        lod_plan = fallback_lod_plan(bbox)
+
     bounding_volume = make_box_bounding_volume(bbox)
 
     def make_node(level_index):
-        level = LOD_LEVELS[level_index]
-        content_path = b3dm_map.get(level)
+        level = lod_plan[level_index]
+        level_name = level["name"]
+        content_path = b3dm_map.get(level_name)
         if not content_path:
             return None
 
         node = {
             "boundingVolume": bounding_volume,
-            "geometricError": errors[level],
+            "geometricError": float(level.get("geometric_error", 0.0)),
             "refine": "REPLACE",
             "content": {
                 "uri": os.path.relpath(content_path, output_folder).replace("\\", "/")
@@ -63,7 +62,7 @@ def build_model_tileset(output_folder, b3dm_map, bbox, lon, lat, height):
         }
 
         next_index = level_index + 1
-        if next_index < len(LOD_LEVELS):
+        if next_index < len(lod_plan):
             child = make_node(next_index)
             if child:
                 node["children"] = [child]
@@ -76,9 +75,10 @@ def build_model_tileset(output_folder, b3dm_map, bbox, lon, lat, height):
 
     root["transform"] = east_north_up_transform(lon, lat, height)
 
+    root_error = float(lod_plan[0].get("geometric_error", 0.0))
     tileset = {
         "asset": {"version": "1.0"},
-        "geometricError": errors["lod0"] * 2.0,
+        "geometricError": max(root_error * 2.0, 1.0),
         "root": root,
     }
 
@@ -139,9 +139,13 @@ def build_scene_tileset(scene_dir, tiles_dir, ready_models, max_depth=4, max_per
             model_tileset = os.path.join(tiles_dir, model["name"], "tileset.json")
             if not os.path.isfile(model_tileset):
                 continue
+
+            lod_plan = model.get("_lod_plan") or fallback_lod_plan(model.get("_bbox") or {})
+            root_model_error = float(lod_plan[0].get("geometric_error", 20.0))
+
             model_children.append({
                 "boundingVolume": _scene_model_region(model),
-                "geometricError": max(20.0, model_lod_errors(model.get("_bbox") or {})["lod0"]),
+                "geometricError": max(1.0, root_model_error),
                 "refine": "REPLACE",
                 "content": {
                     "uri": os.path.relpath(model_tileset, scene_dir).replace("\\", "/")

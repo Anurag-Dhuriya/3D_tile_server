@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -116,6 +117,21 @@ def write_bbox_file(output_path, metrics):
     print(f"[Blender] Bounding box written -> {bbox_path}")
 
 
+def write_meta_file(output_path, metrics, obj):
+    meta_path = output_path.replace(".glb", "_meta.json")
+    payload = {
+        "width": metrics["width"],
+        "depth": metrics["depth"],
+        "height": metrics["height"],
+        "base_z": metrics["base_z"],
+        "vertices": len(obj.data.vertices),
+        "faces": len(obj.data.polygons),
+    }
+    with open(meta_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    print(f"[Blender] Metadata written -> {meta_path}")
+
+
 def export_glb(output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     bpy.ops.export_scene.gltf(
@@ -153,6 +169,7 @@ def run_normalize(input_path, output_path, scale_unit):
     print(f"[Blender] Base Z          : {metrics['base_z']:.4f}m")
 
     write_bbox_file(output_path, metrics)
+    write_meta_file(output_path, metrics, obj)
     export_glb(output_path)
     print("[Blender] Normalize complete")
 

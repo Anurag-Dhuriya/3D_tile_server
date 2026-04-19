@@ -131,10 +131,12 @@ def process_model(name):
             os.path.join(PATHS["tiles_dir"], name),
             result["bbox"],
             lod_plan=result.get("lod_plan", []),
+            analysis=result.get("analysis", {}),
         )
 
         timings = result["timings"]
         lod_count = len(result.get("lod_plan", []))
+        analysis = result.get("analysis", {})
 
         print(f"[Timing] {name} normalize GLB       : {timings['normalize_sec']:.2f}s")
         print(f"[Timing] {name} plan dynamic LODs    : {timings['lod_plan_sec']:.2f}s")
@@ -143,6 +145,14 @@ def process_model(name):
         print(f"[Timing] {name} tileset build       : {timings['tileset_build_sec']:.2f}s")
         print(f"[Timing] {name} full pipeline       : {timings['total_pipeline_sec']:.2f}s")
         print(f"[LOD] {name} dynamic levels         : {lod_count}")
+        if analysis:
+            print(
+                f"[Analyzer] {name} detail={analysis.get('detail_score', 0):.3f}, "
+                f"complexity={analysis.get('geometric_complexity', 0):.3f}, "
+                f"fine={analysis.get('fine_detail_score', 0):.3f}, "
+                f"repetition={analysis.get('repeated_structure_score', 0):.3f}, "
+                f"parts={analysis.get('disconnected_parts', 1)}"
+            )
 
         update_model_fields(
             name,
@@ -168,120 +178,6 @@ def process_model(name):
             processing_duration_sec=failed_after,
         )
         print(f"[Timing] {name} failed after       : {failed_after:.2f}s")
-        print(f"[Server] ERROR processing {name}: {exc}")
-        return False, str(exc)
-
-    config = load_config()
-    index, model = find_model(config, name)
-    if model is None:
-        return False, f"Model not found: {name}"
-
-    processing_started_at = time.time()
-
-    for error in tool_status_errors():
-        update_model_fields(
-            name,
-            status="error",
-            error=error,
-            tileset_url=None,
-            processed_at=None,
-            processing_started_at=processing_started_at,
-            processing_duration_sec=None,
-        )
-        return False, error
-
-    update_model_fields(
-        name,
-        status="processing",
-        error=None,
-        tileset_url=None,
-        processing_started_at=processing_started_at,
-        processing_duration_sec=None,
-    )
-
-    try:
-        print(f"\n[Server] Processing model: {name}")
-        result = build_model_artifacts(model, PATHS, TOOLS)
-        write_bbox_json(os.path.join(PATHS["tiles_dir"], name), result["bbox"])
-
-        timings = result["timings"]
-
-        print(f"[Timing] {name} normalize GLB       : {timings['normalize_sec']:.2f}s")
-        print(f"[Timing] {name} generate 4 LOD GLBs : {timings['lod_generation_sec']:.2f}s")
-        print(f"[Timing] {name} GLB -> b3dm         : {timings['b3dm_conversion_sec']:.2f}s")
-        print(f"[Timing] {name} tileset build       : {timings['tileset_build_sec']:.2f}s")
-        print(f"[Timing] {name} full pipeline       : {timings['total_pipeline_sec']:.2f}s")
-
-        update_model_fields(
-            name,
-            status="ready",
-            error=None,
-            tileset_url=model_tileset_url(name),
-            processed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            processing_started_at=processing_started_at,
-            processing_duration_sec=timings["total_pipeline_sec"],
-        )
-        print(f"[Server] Ready: {model_tileset_url(name)}")
-        return True, model_tileset_url(name)
-
-    except Exception as exc:
-        failed_after = round(time.time() - processing_started_at, 2)
-        update_model_fields(
-            name,
-            status="error",
-            error=str(exc),
-            tileset_url=None,
-            processed_at=None,
-            processing_started_at=processing_started_at,
-            processing_duration_sec=failed_after,
-        )
-        print(f"[Timing] {name} failed after       : {failed_after:.2f}s")
-        print(f"[Server] ERROR processing {name}: {exc}")
-        return False, str(exc)
-
-    config = load_config()
-    index, model = find_model(config, name)
-    if model is None:
-        return False, f"Model not found: {name}"
-
-    for error in tool_status_errors():
-        update_model_fields(
-            name,
-            status="error",
-            error=error,
-            tileset_url=None,
-            processed_at=None,
-        )
-        return False, error
-
-    update_model_fields(
-        name,
-        status="processing",
-        error=None,
-        tileset_url=None,
-    )
-
-    try:
-        print(f"\n[Server] Processing model: {name}")
-        result = build_model_artifacts(model, PATHS, TOOLS)
-        write_bbox_json(os.path.join(PATHS["tiles_dir"], name), result["bbox"])
-        update_model_fields(
-            name,
-            status="ready",
-            error=None,
-            tileset_url=model_tileset_url(name),
-            processed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        )
-        print(f"[Server] Ready: {model_tileset_url(name)}")
-        return True, model_tileset_url(name)
-    except Exception as exc:
-        update_model_fields(
-            name,
-            status="error",
-            error=str(exc),
-            tileset_url=None,
-            processed_at=None,
-        )
         print(f"[Server] ERROR processing {name}: {exc}")
         return False, str(exc)
 
@@ -325,24 +221,6 @@ def process_all_pending():
 
     batch_elapsed = time.perf_counter() - batch_start
     print(f"[Timing] Full batch + scene     : {batch_elapsed:.2f}s")
-
-    config = load_config()
-    pending = [
-        model["name"]
-        for model in config.get("models", [])
-        if model.get("status") in {"pending", "error"}
-    ]
-
-    if not pending:
-        print("[Server] No pending models to process")
-        rebuild_scene_from_config()
-        return
-
-    print(f"[Server] Processing {len(pending)} pending model(s)")
-    for name in pending:
-        process_model(name)
-
-    rebuild_scene_from_config()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

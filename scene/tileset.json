@@ -42,7 +42,7 @@
                 10.0
               ]
             },
-            "geometricError": 13.24,
+            "geometricError": 11.735,
             "refine": "REPLACE",
             "content": {
               "uri": "../tiles/sample/tileset.json"
@@ -59,7 +59,7 @@
                 10.0
               ]
             },
-            "geometricError": 2.852,
+            "geometricError": 2.3,
             "refine": "REPLACE",
             "content": {
               "uri": "../tiles/building2/tileset.json"
@@ -76,7 +76,7 @@
                 11.807171821594238
               ]
             },
-            "geometricError": 12.26,
+            "geometricError": 20.759,
             "refine": "REPLACE",
             "content": {
               "uri": "../tiles/building3/tileset.json"

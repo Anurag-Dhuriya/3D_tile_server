@@ -7,39 +7,46 @@
   "lod_plan": [
     {
       "name": "lod0",
-      "ratio": 0.02,
-      "target_faces": 100,
-      "geometric_error": 13.24
+      "ratio": 0.0592,
+      "target_faces": 254,
+      "geometric_error": 11.735
     },
     {
       "name": "lod1",
-      "ratio": 0.1296,
-      "target_faces": 555,
-      "geometric_error": 8.148
+      "ratio": 0.1231,
+      "target_faces": 527,
+      "geometric_error": 9.073
     },
     {
       "name": "lod2",
-      "ratio": 0.3702,
-      "target_faces": 1585,
-      "geometric_error": 4.481
+      "ratio": 0.372,
+      "target_faces": 1593,
+      "geometric_error": 4.948
     },
     {
       "name": "lod3",
-      "ratio": 0.6561,
-      "target_faces": 2809,
-      "geometric_error": 2.037
-    },
-    {
-      "name": "lod4",
-      "ratio": 0.8493,
-      "target_faces": 3636,
-      "geometric_error": 0.815
-    },
-    {
-      "name": "lod5",
       "ratio": 1.0,
       "target_faces": 4281,
       "geometric_error": 0.0
     }
-  ]
+  ],
+  "analysis": {
+    "faces": 4281,
+    "vertices": 3351,
+    "diagonal": 20.369801546597525,
+    "file_size_bytes": 306406,
+    "disconnected_parts": 256,
+    "geometric_complexity": 0.6864,
+    "fine_detail_score": 0.4424,
+    "repeated_structure_score": 0.9871,
+    "slenderness": 2.1694,
+    "face_score": 0.4411,
+    "vertex_score": 0.4123,
+    "size_score": 0.5284,
+    "file_score": 0.2186,
+    "component_score": 1.0,
+    "aspect_score": 0.1169,
+    "detail_score": 0.505,
+    "preservation_bias": 0.6539
+  }
 }

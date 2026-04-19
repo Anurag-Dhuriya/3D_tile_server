@@ -13,9 +13,6 @@ MIN_FACE_DROP_RATIO = 0.18
 MIN_ERROR_STEP_METERS = 0.15
 MAX_DYNAMIC_LEVELS = 6
 
-# Coarse-to-fine error fractions of model diagonal.
-ERROR_FRACTIONS = [0.65, 0.40, 0.22, 0.10, 0.04, 0.0]
-
 
 def resolve_source_file(paths, file_name):
     candidates = [
@@ -52,6 +49,13 @@ def read_meta_file(path):
         "height": 10.0,
         "faces": 0,
         "vertices": 0,
+        "file_size_bytes": 0,
+        "disconnected_parts": 1,
+        "geometric_complexity": 0.0,
+        "fine_detail_score": 0.0,
+        "repeated_structure_score": 0.0,
+        "slenderness": 1.0,
+        "diagonal": 1.0,
     }
     if not os.path.isfile(path):
         return default_meta
@@ -59,13 +63,9 @@ def read_meta_file(path):
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-        return {
-            "width": float(payload.get("width", 20.0)),
-            "depth": float(payload.get("depth", 20.0)),
-            "height": float(payload.get("height", 10.0)),
-            "faces": int(payload.get("faces", 0)),
-            "vertices": int(payload.get("vertices", 0)),
-        }
+        merged = dict(default_meta)
+        merged.update(payload)
+        return merged
     except Exception:
         return default_meta
 
@@ -115,27 +115,134 @@ def glb_to_b3dm(tool_path, glb_path, b3dm_path):
         raise RuntimeError(f"b3dm not created: {b3dm_path}")
 
 
-def estimate_ratio_from_error_fraction(error_fraction):
-    # Stronger decay than linear so coarse levels become meaningfully lighter.
-    return max(0.02, min(1.0, (1.0 - error_fraction) ** 4))
+def clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
 
 
-def plan_dynamic_lods(meta):
+def safe_log_scale(value, minimum, maximum):
+    if maximum <= minimum:
+        return 0.0
+    value = clamp(value, minimum, maximum)
+    return (math.log10(value) - math.log10(minimum)) / (math.log10(maximum) - math.log10(minimum))
+
+
+def derive_model_scores(meta):
     width = float(meta.get("width", 20.0))
     depth = float(meta.get("depth", 20.0))
     height = float(meta.get("height", 10.0))
-    original_faces = max(int(meta.get("faces", 0)), MIN_FACE_LIMIT)
+    faces = max(int(meta.get("faces", 0)), MIN_FACE_LIMIT)
+    vertices = max(int(meta.get("vertices", 0)), MIN_FACE_LIMIT)
+    diagonal = max(float(meta.get("diagonal", math.sqrt(width * width + depth * depth + height * height))), 1.0)
+    file_size_bytes = max(int(meta.get("file_size_bytes", 0)), 1)
+    disconnected_parts = max(int(meta.get("disconnected_parts", 1)), 1)
+    geometric_complexity = clamp(float(meta.get("geometric_complexity", 0.0)), 0.0, 1.0)
+    fine_detail_score = clamp(float(meta.get("fine_detail_score", 0.0)), 0.0, 1.0)
+    repeated_structure_score = clamp(float(meta.get("repeated_structure_score", 0.0)), 0.0, 1.0)
+    slenderness = max(float(meta.get("slenderness", 1.0)), 1.0)
 
-    diagonal = math.sqrt(width * width + depth * depth + height * height)
-    if diagonal <= 0:
-        diagonal = 1.0
+    face_score = safe_log_scale(faces, 100, 500000)
+    vertex_score = safe_log_scale(vertices, 100, 500000)
+    size_score = safe_log_scale(diagonal, 1.0, 300.0)
+    file_score = safe_log_scale(file_size_bytes, 50_000, 200_000_000)
+    component_score = clamp((disconnected_parts - 1) / 12.0, 0.0, 1.0)
+    aspect_score = clamp((slenderness - 1.0) / 10.0, 0.0, 1.0)
+
+    detail_score = clamp(
+        face_score * 0.24
+        + vertex_score * 0.12
+        + size_score * 0.14
+        + file_score * 0.10
+        + geometric_complexity * 0.16
+        + fine_detail_score * 0.14
+        + component_score * 0.06
+        + repeated_structure_score * 0.02
+        + aspect_score * 0.02,
+        0.0,
+        1.0,
+    )
+
+    preservation_bias = clamp(
+        geometric_complexity * 0.34
+        + fine_detail_score * 0.30
+        + component_score * 0.16
+        + repeated_structure_score * 0.12
+        + aspect_score * 0.08,
+        0.0,
+        1.0,
+    )
+
+    return {
+        "faces": faces,
+        "vertices": vertices,
+        "diagonal": diagonal,
+        "file_size_bytes": file_size_bytes,
+        "disconnected_parts": disconnected_parts,
+        "geometric_complexity": geometric_complexity,
+        "fine_detail_score": fine_detail_score,
+        "repeated_structure_score": repeated_structure_score,
+        "slenderness": slenderness,
+        "face_score": round(face_score, 4),
+        "vertex_score": round(vertex_score, 4),
+        "size_score": round(size_score, 4),
+        "file_score": round(file_score, 4),
+        "component_score": round(component_score, 4),
+        "aspect_score": round(aspect_score, 4),
+        "detail_score": round(detail_score, 4),
+        "preservation_bias": round(preservation_bias, 4),
+    }
+
+
+def choose_level_count(scores):
+    faces = scores["faces"]
+    detail_score = scores["detail_score"]
+
+    if faces < 800 and detail_score < 0.25:
+        return 3
+    if detail_score < 0.45:
+        return 4
+    if detail_score < 0.72:
+        return 5
+    return 6
+
+
+def build_error_fractions(level_count, preservation_bias):
+    if level_count <= 1:
+        return [0.0]
+
+    max_fraction = clamp(0.72 - preservation_bias * 0.22, 0.35, 0.72)
+    fractions = []
+    steps = level_count - 1
+    for index in range(steps):
+        t = index / max(steps - 1, 1)
+        eased = 1.0 - (t ** 1.35)
+        fractions.append(round(max_fraction * eased, 4))
+    fractions.append(0.0)
+    return fractions
+
+
+def estimate_ratio_from_error_fraction(error_fraction, preservation_bias=0.5):
+    exponent = 3.0 + (1.0 - preservation_bias) * 1.6
+    min_ratio = clamp(0.02 + preservation_bias * 0.06, 0.02, 0.08)
+    return max(min_ratio, min(1.0, (1.0 - error_fraction) ** exponent))
+
+
+def plan_dynamic_lods(meta):
+    scores = derive_model_scores(meta)
+    original_faces = scores["faces"]
+    diagonal = scores["diagonal"]
+    level_count = choose_level_count(scores)
+    error_fractions = build_error_fractions(level_count, scores["preservation_bias"])
 
     candidates = []
     previous_target_faces = None
     previous_error = None
 
-    for error_fraction in ERROR_FRACTIONS[:MAX_DYNAMIC_LEVELS]:
-        ratio = 1.0 if error_fraction == 0.0 else estimate_ratio_from_error_fraction(error_fraction)
+    for error_fraction in error_fractions[:MAX_DYNAMIC_LEVELS]:
+        ratio = (
+            1.0
+            if error_fraction == 0.0
+            else estimate_ratio_from_error_fraction(error_fraction, scores["preservation_bias"])
+        )
         target_faces = max(MIN_FACE_LIMIT, int(round(original_faces * ratio)))
         estimated_error = round(diagonal * error_fraction, 3)
 
@@ -187,6 +294,10 @@ def plan_dynamic_lods(meta):
         "levels": lod_plan,
         "original_faces": original_faces,
         "model_diagonal": round(diagonal, 3),
+        "detail_score": scores["detail_score"],
+        "preservation_bias": scores["preservation_bias"],
+        "level_count": len(lod_plan),
+        "analysis": scores,
     }
 
 
@@ -277,7 +388,9 @@ def build_model_artifacts(model, paths, tools):
 
     print(
         f"[LOD] Planned {len(dynamic_plan['levels'])} levels for {name} "
-        f"(faces={dynamic_plan['original_faces']}, diagonal={dynamic_plan['model_diagonal']}m)"
+        f"(faces={dynamic_plan['original_faces']}, diagonal={dynamic_plan['model_diagonal']}m, "
+        f"detail_score={dynamic_plan['detail_score']:.3f}, "
+        f"preservation_bias={dynamic_plan['preservation_bias']:.3f})"
     )
     for level in dynamic_plan["levels"]:
         print(
@@ -334,6 +447,7 @@ def build_model_artifacts(model, paths, tools):
         "lod_plan": dynamic_plan["levels"],
         "source_faces": dynamic_plan["original_faces"],
         "model_diagonal": dynamic_plan["model_diagonal"],
+        "analysis": dynamic_plan["analysis"],
     }
 
 
@@ -365,12 +479,14 @@ def rebuild_scene(config, paths):
     )
 
 
-def write_bbox_json(output_dir, bbox, lod_plan=None):
+def write_bbox_json(output_dir, bbox, lod_plan=None, analysis=None):
     os.makedirs(output_dir, exist_ok=True)
     bbox_path = os.path.join(output_dir, "bbox.json")
     payload = {"bbox": bbox}
     if lod_plan is not None:
         payload["lod_plan"] = lod_plan
+    if analysis is not None:
+        payload["analysis"] = analysis
     with open(bbox_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
     return bbox_path

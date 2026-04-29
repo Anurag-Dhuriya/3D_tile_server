@@ -27,3 +27,34 @@ curl -X POST http://localhost:8080/api/models \
     "lat": 23.02,
     "height": 0
   }'
+
+curl -X POST http://localhost:8080/api/models/my_new_model/process
+
+
+Blender
+Check if Blender exists at the path your server uses:
+
+/Applications/Blender.app/Contents/MacOS/Blender --version
+If it says file not found, install Blender:
+
+brew install --cask blender
+Then test again:
+
+/Applications/Blender.app/Contents/MacOS/Blender --version
+3d-tiles-tools
+Check if installed:
+
+which 3d-tiles-tools
+3d-tiles-tools --version
+If it says command not found, install Node.js first:
+
+brew install node
+Then install 3d-tiles-tools:
+
+npm install -g 3d-tiles-tools
+Then verify:
+
+which 3d-tiles-tools
+3d-tiles-tools --version
+After both work, start your server:
+

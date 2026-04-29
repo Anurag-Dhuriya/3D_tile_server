@@ -1,0 +1,58 @@
+{
+  "bbox": {
+    "width": 906.64306640625,
+    "depth": 762.2158508300781,
+    "height": 75.70903015136719
+  },
+  "lod_plan": [
+    {
+      "name": "lod0",
+      "ratio": 0.0917,
+      "target_faces": 46662,
+      "geometric_error": 625.135
+    },
+    {
+      "name": "lod1",
+      "ratio": 0.1519,
+      "target_faces": 77288,
+      "geometric_error": 528.997
+    },
+    {
+      "name": "lod2",
+      "ratio": 0.2916,
+      "target_faces": 148403,
+      "geometric_error": 379.923
+    },
+    {
+      "name": "lod3",
+      "ratio": 0.5525,
+      "target_faces": 281193,
+      "geometric_error": 201.178
+    },
+    {
+      "name": "lod4",
+      "ratio": 1.0,
+      "target_faces": 508925,
+      "geometric_error": 0.0
+    }
+  ],
+  "analysis": {
+    "faces": 508925,
+    "vertices": 511341,
+    "diagonal": 1186.889426343334,
+    "file_size_bytes": 75585857,
+    "disconnected_parts": 99,
+    "geometric_complexity": 0.643,
+    "fine_detail_score": 1.0,
+    "repeated_structure_score": 1.0,
+    "slenderness": 11.9754,
+    "face_score": 1.0,
+    "vertex_score": 1.0,
+    "size_score": 1.0,
+    "file_score": 0.8827,
+    "component_score": 1.0,
+    "aspect_score": 1.0,
+    "detail_score": 0.9311,
+    "preservation_bias": 0.8786
+  }
+}

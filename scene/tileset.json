@@ -81,6 +81,23 @@
             "content": {
               "uri": "../tiles/building3/tileset.json"
             }
+          },
+          {
+            "boundingVolume": {
+              "region": [
+                1.2665326479682275,
+                0.40175825345523136,
+                1.266687097595398,
+                0.40187860062555775,
+                0.0,
+                75.70903015136719
+              ]
+            },
+            "geometricError": 625.135,
+            "refine": "REPLACE",
+            "content": {
+              "uri": "../tiles/new_model/tileset.json"
+            }
           }
         ]
       }

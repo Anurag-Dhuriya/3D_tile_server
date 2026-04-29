@@ -1,0 +1,29 @@
+cd 3D_tile_server
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+npm install -g 3d-tiles-tools
+
+GMl
+curl -X POST http://localhost:8080/api/models \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_city",
+    "file": "my_city.gml",
+    "unit": "m",
+    "lon": 0,
+    "lat": 0,
+    "height": 0
+  }'
+
+GLb
+curl -X POST http://localhost:8080/api/models \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_city",
+    "file": "my_city.glb",
+    "unit": "m",
+    "lon": 72.57,
+    "lat": 23.02,
+    "height": 0
+  }'

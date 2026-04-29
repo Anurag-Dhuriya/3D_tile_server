@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import time
 
+from .citygml import extract_citygml_buildings
 from .tileset_builder import build_model_tileset, build_scene_tileset
 
 
@@ -143,7 +144,7 @@ def derive_model_scores(meta):
     face_score = safe_log_scale(faces, 100, 500000)
     vertex_score = safe_log_scale(vertices, 100, 500000)
     size_score = safe_log_scale(diagonal, 1.0, 300.0)
-    file_score = safe_log_scale(file_size_bytes, 50_000, 200_000_000)
+    file_score = safe_log_scale(file_size_bytes, 50000, 200000000)
     component_score = clamp((disconnected_parts - 1) / 12.0, 0.0, 1.0)
     aspect_score = clamp((slenderness - 1.0) / 10.0, 0.0, 1.0)
 
@@ -267,7 +268,6 @@ def plan_dynamic_lods(meta):
             "estimated_error": 0.0,
         })
 
-    # Remove duplicate target face counts while keeping the finest version.
     deduped = []
     seen_faces = set()
     for candidate in reversed(candidates):
@@ -301,8 +301,7 @@ def plan_dynamic_lods(meta):
     }
 
 
-def generate_lod_glbs(model_name, normalized_glb, paths, tools, lod_plan):
-    lod_dir = os.path.join(paths["lod_dir"], model_name)
+def generate_lod_glbs(source_glb, lod_dir, asset_name, tools, lod_plan):
     shutil.rmtree(lod_dir, ignore_errors=True)
     os.makedirs(lod_dir, exist_ok=True)
 
@@ -313,10 +312,10 @@ def generate_lod_glbs(model_name, normalized_glb, paths, tools, lod_plan):
 
         level_dir = os.path.join(lod_dir, level_name)
         os.makedirs(level_dir, exist_ok=True)
-        output_glb = os.path.join(level_dir, f"{model_name}.glb")
+        output_glb = os.path.join(level_dir, f"{asset_name}.glb")
 
         if ratio >= 0.999:
-            shutil.copy2(normalized_glb, output_glb)
+            shutil.copy2(source_glb, output_glb)
             print(f"[LOD] {level_name}: copied full-detail GLB")
         else:
             print(
@@ -328,7 +327,7 @@ def generate_lod_glbs(model_name, normalized_glb, paths, tools, lod_plan):
                 blender_path=tools["blender_path"],
                 script_path=tools["blender_script"],
                 mode="lod",
-                input_path=normalized_glb,
+                input_path=source_glb,
                 output_path=output_glb,
                 extra_arg=ratio,
             )
@@ -336,6 +335,62 @@ def generate_lod_glbs(model_name, normalized_glb, paths, tools, lod_plan):
         lod_paths[level_name] = output_glb
 
     return lod_paths
+
+
+def process_mesh_asset(asset_name, source_path, unit, paths, tools, model_name, output_dir):
+    safe_asset_name = f"{model_name}__{asset_name}"
+    normalized_glb = os.path.join(paths["models_dir"], f"{safe_asset_name}.glb")
+    bbox_path = normalized_glb.replace(".glb", "_bbox.txt")
+    meta_path = normalized_glb.replace(".glb", "_meta.json")
+
+    print(f"[Pipeline] Normalizing {asset_name} from {os.path.basename(source_path)}")
+    run_blender_step(
+        blender_path=tools["blender_path"],
+        script_path=tools["blender_script"],
+        mode="normalize",
+        input_path=source_path,
+        output_path=normalized_glb,
+        extra_arg=unit,
+    )
+
+    bbox = read_bbox_file(bbox_path)
+    meta = read_meta_file(meta_path)
+    if os.path.isfile(bbox_path):
+        os.remove(bbox_path)
+    if os.path.isfile(meta_path):
+        os.remove(meta_path)
+
+    dynamic_plan = plan_dynamic_lods(meta)
+    print(
+        f"[LOD] Planned {len(dynamic_plan['levels'])} levels for {asset_name} "
+        f"(faces={dynamic_plan['original_faces']}, diagonal={dynamic_plan['model_diagonal']}m, "
+        f"detail_score={dynamic_plan['detail_score']:.3f}, "
+        f"preservation_bias={dynamic_plan['preservation_bias']:.3f})"
+    )
+
+    lod_glbs = generate_lod_glbs(
+        source_glb=normalized_glb,
+        lod_dir=os.path.join(paths["lod_dir"], model_name, asset_name),
+        asset_name=asset_name,
+        tools=tools,
+        lod_plan=dynamic_plan["levels"],
+    )
+
+    b3dm_map = {}
+    for level in dynamic_plan["levels"]:
+        level_name = level["name"]
+        glb_path = lod_glbs[level_name]
+        b3dm_path = os.path.join(output_dir, "buildings", asset_name, level_name, "content.b3dm")
+        print(f"[Pipeline] {model_name} {asset_name} {level_name}: GLB -> b3dm")
+        glb_to_b3dm(tools["tiles_tools_path"], glb_path, b3dm_path)
+        b3dm_map[level_name] = b3dm_path
+
+    return {
+        "bbox": bbox,
+        "lod_plan": dynamic_plan["levels"],
+        "analysis": dynamic_plan["analysis"],
+        "b3dm_map": b3dm_map,
+    }
 
 
 def build_model_artifacts(model, paths, tools):
@@ -353,78 +408,110 @@ def build_model_artifacts(model, paths, tools):
         raise FileNotFoundError(f"Source file not found: {file_name}")
 
     ext = os.path.splitext(source_path)[1].lower()
-    if ext not in {".obj", ".glb", ".gltf"}:
+    if ext not in {".obj", ".glb", ".gltf", ".gml", ".xml"}:
         raise ValueError(f"Unsupported format: {ext}")
 
-    normalized_glb = os.path.join(paths["models_dir"], f"{name}.glb")
-    bbox_path = normalized_glb.replace(".glb", "_bbox.txt")
-    meta_path = normalized_glb.replace(".glb", "_meta.json")
     output_dir = os.path.join(paths["tiles_dir"], name)
+    citygml_dir = os.path.join(paths["models_dir"], f"{name}_citygml")
 
     shutil.rmtree(output_dir, ignore_errors=True)
+    shutil.rmtree(citygml_dir, ignore_errors=True)
 
-    normalize_start = time.perf_counter()
-    print(f"[Pipeline] Normalizing {name} from {os.path.basename(source_path)}")
-    run_blender_step(
-        blender_path=tools["blender_path"],
-        script_path=tools["blender_script"],
-        mode="normalize",
-        input_path=source_path,
-        output_path=normalized_glb,
-        extra_arg=unit,
-    )
-    normalize_sec = time.perf_counter() - normalize_start
+    if ext in {".gml", ".xml"}:
+        parse_start = time.perf_counter()
+        print(f"[Pipeline] Parsing CityGML for {name} from {os.path.basename(source_path)}")
+        city_manifest = extract_citygml_buildings(source_path, citygml_dir)
+        parse_sec = time.perf_counter() - parse_start
 
-    bbox = read_bbox_file(bbox_path)
-    meta = read_meta_file(meta_path)
-    if os.path.isfile(bbox_path):
-        os.remove(bbox_path)
-    if os.path.isfile(meta_path):
-        os.remove(meta_path)
+        building_entries = []
+        building_start = time.perf_counter()
+        for building in city_manifest["buildings"]:
+            asset_name = building["name"]
+            asset_source = os.path.join(citygml_dir, building["file"])
+            asset_result = process_mesh_asset(
+                asset_name=asset_name,
+                source_path=asset_source,
+                unit="m",
+                paths=paths,
+                tools=tools,
+                model_name=name,
+                output_dir=output_dir,
+            )
+            building_entries.append({
+                "name": asset_name,
+                "bbox": asset_result["bbox"],
+                "lod_plan": asset_result["lod_plan"],
+                "b3dm_map": asset_result["b3dm_map"],
+                "offset_x": building["offset_x"],
+                "offset_y": building["offset_y"],
+                "offset_z": building["offset_z"],
+                "analysis": asset_result["analysis"],
+            })
 
-    lod_plan_start = time.perf_counter()
-    dynamic_plan = plan_dynamic_lods(meta)
-    lod_plan_sec = time.perf_counter() - lod_plan_start
+        normalize_sec = round(parse_sec, 2)
+        lod_plan_sec = 0.0
+        lod_sec = time.perf_counter() - building_start
+        b3dm_sec = 0.0
 
-    print(
-        f"[LOD] Planned {len(dynamic_plan['levels'])} levels for {name} "
-        f"(faces={dynamic_plan['original_faces']}, diagonal={dynamic_plan['model_diagonal']}m, "
-        f"detail_score={dynamic_plan['detail_score']:.3f}, "
-        f"preservation_bias={dynamic_plan['preservation_bias']:.3f})"
-    )
-    for level in dynamic_plan["levels"]:
-        print(
-            f"[LOD] {level['name']}: ratio={level['ratio']:.4f}, "
-            f"target_faces={level['target_faces']}, "
-            f"geometric_error={level['geometric_error']:.3f}m"
+        tileset_start = time.perf_counter()
+        tileset_path = build_model_tileset(
+            output_folder=output_dir,
+            bbox=city_manifest["bbox"],
+            lon=city_manifest["origin_lon"],
+            lat=city_manifest["origin_lat"],
+            height=city_manifest["origin_height"],
+            chunks=building_entries,
         )
+        tileset_sec = time.perf_counter() - tileset_start
 
-    lod_start = time.perf_counter()
-    lod_glbs = generate_lod_glbs(name, normalized_glb, paths, tools, dynamic_plan["levels"])
-    lod_sec = time.perf_counter() - lod_start
+        bbox = city_manifest["bbox"]
+        analysis_payload = {
+            "source_type": "citygml",
+            "building_count": len(building_entries),
+            "origin_lon": city_manifest["origin_lon"],
+            "origin_lat": city_manifest["origin_lat"],
+        }
+        lod_plan_payload = [
+            {
+                "name": "multi-building",
+                "ratio": 1.0,
+                "target_faces": 0,
+                "geometric_error": 0.0,
+            }
+        ]
 
-    b3dm_start = time.perf_counter()
-    b3dm_map = {}
-    for level in dynamic_plan["levels"]:
-        level_name = level["name"]
-        glb_path = lod_glbs[level_name]
-        b3dm_path = os.path.join(output_dir, level_name, "content.b3dm")
-        print(f"[Pipeline] {name} {level_name}: GLB -> b3dm")
-        glb_to_b3dm(tools["tiles_tools_path"], glb_path, b3dm_path)
-        b3dm_map[level_name] = b3dm_path
-    b3dm_sec = time.perf_counter() - b3dm_start
+    else:
+        single_start = time.perf_counter()
+        asset_result = process_mesh_asset(
+            asset_name=name,
+            source_path=source_path,
+            unit=unit,
+            paths=paths,
+            tools=tools,
+            model_name=name,
+            output_dir=output_dir,
+        )
+        process_sec = time.perf_counter() - single_start
 
-    tileset_start = time.perf_counter()
-    tileset_path = build_model_tileset(
-        output_folder=output_dir,
-        b3dm_map=b3dm_map,
-        bbox=bbox,
-        lon=lon,
-        lat=lat,
-        height=height,
-        lod_plan=dynamic_plan["levels"],
-    )
-    tileset_sec = time.perf_counter() - tileset_start
+        tileset_start = time.perf_counter()
+        tileset_path = build_model_tileset(
+            output_folder=output_dir,
+            bbox=asset_result["bbox"],
+            lon=lon,
+            lat=lat,
+            height=height,
+            b3dm_map=asset_result["b3dm_map"],
+            lod_plan=asset_result["lod_plan"],
+        )
+        tileset_sec = time.perf_counter() - tileset_start
+
+        bbox = asset_result["bbox"]
+        analysis_payload = asset_result["analysis"]
+        lod_plan_payload = asset_result["lod_plan"]
+        normalize_sec = round(process_sec, 2)
+        lod_plan_sec = 0.0
+        lod_sec = 0.0
+        b3dm_sec = 0.0
 
     if not tileset_path:
         raise RuntimeError("Failed to build model tileset")
@@ -444,10 +531,8 @@ def build_model_artifacts(model, paths, tools):
         "bbox": bbox,
         "tileset_path": tileset_path,
         "timings": timings,
-        "lod_plan": dynamic_plan["levels"],
-        "source_faces": dynamic_plan["original_faces"],
-        "model_diagonal": dynamic_plan["model_diagonal"],
-        "analysis": dynamic_plan["analysis"],
+        "lod_plan": lod_plan_payload,
+        "analysis": analysis_payload,
     }
 
 

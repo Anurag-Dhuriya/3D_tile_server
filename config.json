@@ -43,6 +43,20 @@
       "processed_at": "2026-04-19 14:55:19",
       "processing_started_at": 1776590715.589397,
       "processing_duration_sec": 3.49
+    },
+    {
+      "name": "Test_1",
+      "file": "Test_1.gml",
+      "unit": "m",
+      "lon": 0.0,
+      "lat": 0.0,
+      "height": 0.0,
+      "status": "processing",
+      "tileset_url": null,
+      "error": null,
+      "processed_at": null,
+      "processing_started_at": 1777132856.330147,
+      "processing_duration_sec": null
     }
   ]
 }

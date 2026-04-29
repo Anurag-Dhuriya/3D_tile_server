@@ -39,21 +39,28 @@ def make_box_bounding_volume(bbox):
     }
 
 
-def build_model_tileset(output_folder, b3dm_map, bbox, lon, lat, height, lod_plan):
+def local_translation_transform(x, y, z):
+    return [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        float(x), float(y), float(z), 1.0,
+    ]
+
+
+def build_model_tileset(output_folder, bbox, lon, lat, height, b3dm_map=None, lod_plan=None, chunks=None):
     if not lod_plan:
         lod_plan = fallback_lod_plan(bbox)
 
-    bounding_volume = make_box_bounding_volume(bbox)
-
-    def make_node(level_index):
-        level = lod_plan[level_index]
+    def make_node(level_plan, content_map, local_bbox, level_index):
+        level = level_plan[level_index]
         level_name = level["name"]
-        content_path = b3dm_map.get(level_name)
+        content_path = content_map.get(level_name)
         if not content_path:
             return None
 
         node = {
-            "boundingVolume": bounding_volume,
+            "boundingVolume": make_box_bounding_volume(local_bbox),
             "geometricError": float(level.get("geometric_error", 0.0)),
             "refine": "REPLACE",
             "content": {
@@ -62,25 +69,64 @@ def build_model_tileset(output_folder, b3dm_map, bbox, lon, lat, height, lod_pla
         }
 
         next_index = level_index + 1
-        if next_index < len(lod_plan):
-            child = make_node(next_index)
+        if next_index < len(level_plan):
+            child = make_node(level_plan, content_map, local_bbox, next_index)
             if child:
                 node["children"] = [child]
 
         return node
 
-    root = make_node(0)
-    if root is None:
-        return None
+    if chunks:
+        children = []
+        root_error = 1.0
 
-    root["transform"] = east_north_up_transform(lon, lat, height)
+        for chunk in chunks:
+            chunk_plan = chunk.get("lod_plan") or fallback_lod_plan(chunk.get("bbox") or {})
+            child = make_node(
+                chunk_plan,
+                chunk.get("b3dm_map") or {},
+                chunk.get("bbox") or bbox,
+                0,
+            )
+            if not child:
+                continue
 
-    root_error = float(lod_plan[0].get("geometric_error", 0.0))
-    tileset = {
-        "asset": {"version": "1.0"},
-        "geometricError": max(root_error * 2.0, 1.0),
-        "root": root,
-    }
+            child["transform"] = local_translation_transform(
+                chunk.get("offset_x", 0.0),
+                chunk.get("offset_y", 0.0),
+                chunk.get("offset_z", 0.0),
+            )
+            children.append(child)
+            root_error = max(root_error, float(chunk_plan[0].get("geometric_error", 1.0)))
+
+        if not children:
+            return None
+
+        root = {
+            "boundingVolume": make_box_bounding_volume(bbox),
+            "geometricError": max(root_error * 1.5, 1.0),
+            "refine": "ADD",
+            "transform": east_north_up_transform(lon, lat, height),
+            "children": children,
+        }
+        tileset = {
+            "asset": {"version": "1.0"},
+            "geometricError": max(root_error * 2.0, 1.0),
+            "root": root,
+        }
+    else:
+        root = make_node(lod_plan, b3dm_map or {}, bbox, 0)
+        if root is None:
+            return None
+
+        root["transform"] = east_north_up_transform(lon, lat, height)
+
+        root_error = float(lod_plan[0].get("geometric_error", 0.0))
+        tileset = {
+            "asset": {"version": "1.0"},
+            "geometricError": max(root_error * 2.0, 1.0),
+            "root": root,
+        }
 
     os.makedirs(output_folder, exist_ok=True)
     tileset_path = os.path.join(output_folder, "tileset.json")

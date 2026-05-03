@@ -314,6 +314,42 @@
     let sceneLoaded = false;
     let sceneCenter = null;
 
+    // --- REAL-TIME LOD TRACKING ---
+    let visibleTilesCount = 0;
+    let minGeometricError = Infinity;
+
+    viewer.scene.preRender.addEventListener(function() {
+        visibleTilesCount = 0;
+        minGeometricError = Infinity;
+    });
+
+    viewer.scene.postRender.addEventListener(function() {
+        const count = Object.keys(loadedTilesets).filter(name => name !== '__scene__').length
+          + (loadedTilesets['__scene__'] ? 1 : 0);
+
+        document.getElementById('stat-models').textContent = count;
+
+        if (count === 0) {
+            document.getElementById('stat-lod').textContent = '—';
+            document.getElementById('stat-tiles').textContent = '—';
+            return;
+        }
+
+        if (visibleTilesCount > 0) {
+            document.getElementById('stat-tiles').textContent = visibleTilesCount;
+            // Ignore the forced 10000000.0 error from the empty wrapper nodes
+            if (minGeometricError >= 10000000) {
+                document.getElementById('stat-lod').textContent = 'Loading...';
+            } else {
+                document.getElementById('stat-lod').textContent = `Error: ${minGeometricError.toFixed(2)}`;
+            }
+        } else {
+            document.getElementById('stat-tiles').textContent = '0';
+            document.getElementById('stat-lod').textContent = '—';
+        }
+    });
+    // ------------------------------
+
     function setStatus(msg, isError) {
       const el = document.getElementById('status-bar');
       el.style.display = 'block';
@@ -332,25 +368,6 @@
       document.getElementById('tab-' + name).classList.add('active');
       if (name === 'models') refreshModels();
     }
-
-    function updateStats() {
-      const count = Object.keys(loadedTilesets).filter(name => name !== '__scene__').length
-        + (loadedTilesets['__scene__'] ? 1 : 0);
-      document.getElementById('stat-models').textContent = count;
-
-      document.getElementById('stat-lod').textContent =
-        count > 0 ? 'Auto (distance-based)' : '—';
-
-      let tiles = 0;
-      for (const ts of Object.values(loadedTilesets)) {
-        try {
-          tiles += ts.statistics ? ts.statistics.numberOfTilesWithContentReady : 0;
-        } catch (e) {}
-      }
-      document.getElementById('stat-tiles').textContent = tiles > 0 ? tiles : '—';
-    }
-
-    setInterval(updateStats, 1000);
 
     async function waitForVisibleTiles(tileset, timeoutMs = 10000) {
       return new Promise((resolve) => {
@@ -429,6 +446,15 @@
         clearLoadedTilesets();
 
         const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
+        
+        // Attach listener for real-time LOD stat updates
+        tileset.tileVisible.addEventListener(function(tile) {
+            visibleTilesCount++;
+            if (tile.geometricError < minGeometricError) {
+                minGeometricError = tile.geometricError;
+            }
+        });
+
         viewer.scene.primitives.add(tileset);
         loadedTilesets['__scene__'] = tileset;
         sceneLoaded = true;
@@ -451,19 +477,6 @@
 
         const viewerLoadSec = ((performance.now() - loadStart) / 1000).toFixed(2);
         console.log(`[Timing] Scene viewer load: ${viewerLoadSec}s`);
-
-        try {
-          const models = await getAllModels();
-          const ready = models.filter(m => m.status === 'ready' && m.processing_started_at);
-
-          if (ready.length > 0) {
-            const earliestStartMs = Math.min(...ready.map(m => m.processing_started_at * 1000));
-            const endToEndSec = ((Date.now() - earliestStartMs) / 1000).toFixed(2);
-            console.log(`[Timing] Scene end-to-end (approx): ${endToEndSec}s`);
-          }
-        } catch (e) {
-          console.warn('Could not compute scene end-to-end timing', e);
-        }
 
       } catch (err) {
         setStatus('Error: ' + err.message, true);
@@ -526,6 +539,15 @@
 
       try {
         const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl);
+        
+        // Attach listener for real-time LOD stat updates
+        tileset.tileVisible.addEventListener(function(tile) {
+            visibleTilesCount++;
+            if (tile.geometricError < minGeometricError) {
+                minGeometricError = tile.geometricError;
+            }
+        });
+
         viewer.scene.primitives.add(tileset);
         loadedTilesets[name] = tileset;
 
@@ -539,23 +561,6 @@
         );
 
         await waitForVisibleTiles(tileset);
-
-        const viewerLoadSec = ((performance.now() - loadStart) / 1000).toFixed(2);
-        console.log(`[Timing] Viewer load for ${name}: ${viewerLoadSec}s`);
-
-        try {
-          const modelInfo = await getModelStatus(name);
-          if (modelInfo && modelInfo.processing_started_at) {
-            const endToEndSec = ((Date.now() - modelInfo.processing_started_at * 1000) / 1000).toFixed(2);
-            console.log(`[Timing] End-to-end for ${name}: ${endToEndSec}s`);
-          }
-          if (modelInfo && modelInfo.processing_duration_sec != null) {
-            console.log(`[Timing] Backend pipeline for ${name}: ${modelInfo.processing_duration_sec}s`);
-          }
-        } catch (e) {
-          console.warn(`Could not compute timing for ${name}`, e);
-        }
-
         setStatus(`${name} loaded`);
       } catch (err) {
         setStatus(`Error loading ${name}: ` + err.message, true);
@@ -596,6 +601,15 @@
         }
 
         const tileset = await Cesium.Cesium3DTileset.fromUrl(tsUrl);
+        
+        // Attach listener for real-time LOD stat updates
+        tileset.tileVisible.addEventListener(function(tile) {
+            visibleTilesCount++;
+            if (tile.geometricError < minGeometricError) {
+                minGeometricError = tile.geometricError;
+            }
+        });
+
         viewer.scene.primitives.add(tileset);
         loadedTilesets[name] = tileset;
 

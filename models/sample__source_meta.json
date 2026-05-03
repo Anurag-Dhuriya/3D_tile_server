@@ -1,0 +1,15 @@
+{
+  "width": 12.4377441406,
+  "depth": 6.753079176000001,
+  "height": 14.650163574300002,
+  "faces": 4281,
+  "vertices": 6501,
+  "file_size_bytes": 306406,
+  "disconnected_parts": 1295,
+  "geometric_complexity": 0.5121,
+  "fine_detail_score": 0.287,
+  "repeated_structure_score": 0.0,
+  "slenderness": 2.1694,
+  "diagonal": 20.3698,
+  "has_texture": false
+}

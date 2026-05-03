@@ -6,6 +6,8 @@ import subprocess
 import time
 
 from .citygml import extract_citygml_buildings
+from .mesh_backend import normalize_mesh, generate_lod_glb
+from .spatial_chunker import should_spatially_chunk, chunk_scene_to_glb_assets
 from .tileset_builder import build_model_tileset, build_scene_tileset
 
 
@@ -71,44 +73,13 @@ def read_meta_file(path):
         return default_meta
 
 
-def run_blender_step(blender_path, script_path, mode, input_path, output_path, extra_arg):
-    command = [
-        blender_path,
-        "--background",
-        "--python",
-        script_path,
-        "--",
-        mode,
-        input_path,
-        output_path,
-        str(extra_arg),
-    ]
-
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-
-    for line in result.stdout.splitlines():
-        if "[Blender]" in line:
-            print(line)
-
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"Blender {mode} step failed")
-
-    if not os.path.isfile(output_path):
-        raise RuntimeError(f"Expected output not found: {output_path}")
-
-
 def glb_to_b3dm(tool_path, glb_path, b3dm_path):
     os.makedirs(os.path.dirname(b3dm_path), exist_ok=True)
     result = subprocess.run(
         [tool_path, "glbToB3dm", "-i", glb_path, "-o", b3dm_path, "-f"],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"glbToB3dm failed for {glb_path}")
@@ -124,7 +95,9 @@ def safe_log_scale(value, minimum, maximum):
     if maximum <= minimum:
         return 0.0
     value = clamp(value, minimum, maximum)
-    return (math.log10(value) - math.log10(minimum)) / (math.log10(maximum) - math.log10(minimum))
+    return (math.log10(value) - math.log10(minimum)) / (
+        math.log10(maximum) - math.log10(minimum)
+    )
 
 
 def derive_model_scores(meta):
@@ -133,7 +106,10 @@ def derive_model_scores(meta):
     height = float(meta.get("height", 10.0))
     faces = max(int(meta.get("faces", 0)), MIN_FACE_LIMIT)
     vertices = max(int(meta.get("vertices", 0)), MIN_FACE_LIMIT)
-    diagonal = max(float(meta.get("diagonal", math.sqrt(width * width + depth * depth + height * height))), 1.0)
+    diagonal = max(
+        float(meta.get("diagonal", math.sqrt(width * width + depth * depth + height * height))),
+        1.0,
+    )
     file_size_bytes = max(int(meta.get("file_size_bytes", 0)), 1)
     disconnected_parts = max(int(meta.get("disconnected_parts", 1)), 1)
     geometric_complexity = clamp(float(meta.get("geometric_complexity", 0.0)), 0.0, 1.0)
@@ -213,10 +189,12 @@ def build_error_fractions(level_count, preservation_bias):
     max_fraction = clamp(0.72 - preservation_bias * 0.22, 0.35, 0.72)
     fractions = []
     steps = level_count - 1
+
     for index in range(steps):
         t = index / max(steps - 1, 1)
         eased = 1.0 - (t ** 1.35)
         fractions.append(round(max_fraction * eased, 4))
+
     fractions.append(0.0)
     return fractions
 
@@ -244,6 +222,7 @@ def plan_dynamic_lods(meta):
             if error_fraction == 0.0
             else estimate_ratio_from_error_fraction(error_fraction, scores["preservation_bias"])
         )
+
         target_faces = max(MIN_FACE_LIMIT, int(round(original_faces * ratio)))
         estimated_error = round(diagonal * error_fraction, 3)
 
@@ -258,6 +237,7 @@ def plan_dynamic_lods(meta):
             "target_faces": target_faces,
             "estimated_error": estimated_error,
         })
+
         previous_target_faces = target_faces
         previous_error = estimated_error
 
@@ -270,12 +250,14 @@ def plan_dynamic_lods(meta):
 
     deduped = []
     seen_faces = set()
+
     for candidate in reversed(candidates):
         key = candidate["target_faces"]
         if key in seen_faces:
             continue
         seen_faces.add(key)
         deduped.append(candidate)
+
     deduped.reverse()
 
     lod_plan = []
@@ -306,31 +288,29 @@ def generate_lod_glbs(source_glb, lod_dir, asset_name, tools, lod_plan):
     os.makedirs(lod_dir, exist_ok=True)
 
     lod_paths = {}
+
     for level in lod_plan:
         level_name = level["name"]
         ratio = float(level["ratio"])
 
         level_dir = os.path.join(lod_dir, level_name)
         os.makedirs(level_dir, exist_ok=True)
+
         output_glb = os.path.join(level_dir, f"{asset_name}.glb")
 
-        if ratio >= 0.999:
-            shutil.copy2(source_glb, output_glb)
-            print(f"[LOD] {level_name}: copied full-detail GLB")
-        else:
-            print(
-                f"[LOD] {level_name}: ratio={ratio:.4f}, "
-                f"target_faces={level['target_faces']}, "
-                f"estimated_error={level['geometric_error']:.3f}m"
-            )
-            run_blender_step(
-                blender_path=tools["blender_path"],
-                script_path=tools["blender_script"],
-                mode="lod",
-                input_path=source_glb,
-                output_path=output_glb,
-                extra_arg=ratio,
-            )
+        print(
+            f"[LOD] {level_name}: ratio={ratio:.4f}, "
+            f"target_faces={level['target_faces']}, "
+            f"estimated_error={level['geometric_error']:.3f}m"
+        )
+
+        generate_lod_glb(
+            input_glb=source_glb,
+            output_glb=output_glb,
+            ratio=ratio,
+            target_faces=level["target_faces"],
+            tools=tools,
+        )
 
         lod_paths[level_name] = output_glb
 
@@ -344,26 +324,26 @@ def process_mesh_asset(asset_name, source_path, unit, paths, tools, model_name, 
     meta_path = normalized_glb.replace(".glb", "_meta.json")
 
     print(f"[Pipeline] Normalizing {asset_name} from {os.path.basename(source_path)}")
-    run_blender_step(
-        blender_path=tools["blender_path"],
-        script_path=tools["blender_script"],
-        mode="normalize",
-        input_path=source_path,
-        output_path=normalized_glb,
-        extra_arg=unit,
+    normalize_mesh(
+        source_path=source_path,
+        output_glb=normalized_glb,
+        unit=unit,
     )
 
     bbox = read_bbox_file(bbox_path)
     meta = read_meta_file(meta_path)
+
     if os.path.isfile(bbox_path):
         os.remove(bbox_path)
     if os.path.isfile(meta_path):
         os.remove(meta_path)
 
     dynamic_plan = plan_dynamic_lods(meta)
+
     print(
         f"[LOD] Planned {len(dynamic_plan['levels'])} levels for {asset_name} "
-        f"(faces={dynamic_plan['original_faces']}, diagonal={dynamic_plan['model_diagonal']}m, "
+        f"(faces={dynamic_plan['original_faces']}, "
+        f"diagonal={dynamic_plan['model_diagonal']}m, "
         f"detail_score={dynamic_plan['detail_score']:.3f}, "
         f"preservation_bias={dynamic_plan['preservation_bias']:.3f})"
     )
@@ -377,10 +357,18 @@ def process_mesh_asset(asset_name, source_path, unit, paths, tools, model_name, 
     )
 
     b3dm_map = {}
+
     for level in dynamic_plan["levels"]:
         level_name = level["name"]
         glb_path = lod_glbs[level_name]
-        b3dm_path = os.path.join(output_dir, "buildings", asset_name, level_name, "content.b3dm")
+        b3dm_path = os.path.join(
+            output_dir,
+            "buildings",
+            asset_name,
+            level_name,
+            "content.b3dm",
+        )
+
         print(f"[Pipeline] {model_name} {asset_name} {level_name}: GLB -> b3dm")
         glb_to_b3dm(tools["tiles_tools_path"], glb_path, b3dm_path)
         b3dm_map[level_name] = b3dm_path
@@ -390,6 +378,134 @@ def process_mesh_asset(asset_name, source_path, unit, paths, tools, model_name, 
         "lod_plan": dynamic_plan["levels"],
         "analysis": dynamic_plan["analysis"],
         "b3dm_map": b3dm_map,
+    }
+
+
+def process_spatially_chunked_mesh(model, source_path, paths, tools, output_dir):
+    model_name = model["name"]
+    unit = model.get("unit", "m")
+
+    lon = float(model.get("lon", 0.0))
+    lat = float(model.get("lat", 0.0))
+    height = float(model.get("height", 0.0))
+
+    chunk_mode = model.get("spatial_chunking", "auto")
+    chunk_size_m = float(model.get("chunk_size_m", 5000.0))
+    max_chunks = int(model.get("max_chunks", 512))
+
+    normalized_glb = os.path.join(paths["models_dir"], f"{model_name}__source.glb")
+    bbox_path = normalized_glb.replace(".glb", "_bbox.txt")
+    meta_path = normalized_glb.replace(".glb", "_meta.json")
+
+    print(f"[Pipeline] Normalizing full source for chunking: {model_name}")
+
+    normalize_mesh(
+        source_path=source_path,
+        output_glb=normalized_glb,
+        unit=unit,
+    )
+
+    bbox = read_bbox_file(bbox_path)
+    meta = read_meta_file(meta_path)
+
+    if not should_spatially_chunk(meta, bbox, chunk_mode):
+        print("[Chunking] Model is small enough; using normal single-model pipeline")
+        return None
+
+    chunk_source_dir = os.path.join(paths["models_dir"], f"{model_name}_chunks")
+
+    shutil.rmtree(chunk_source_dir, ignore_errors=True)
+
+    chunk_records = chunk_scene_to_glb_assets(
+        source_glb=normalized_glb,
+        output_dir=chunk_source_dir,
+        chunk_size_m=chunk_size_m,
+        max_chunks=max_chunks,
+    )
+
+    building_entries = []
+
+    for record in chunk_records:
+        asset_name = record["name"]
+
+        print(
+            f"[Chunking] Processing {asset_name} "
+            f"faces={record['faces']} "
+            f"offset=({record['offset_x']}, {record['offset_y']}, {record['offset_z']})"
+        )
+
+        try:
+            asset_result = process_mesh_asset(
+                asset_name=asset_name,
+                source_path=record["file_path"],
+                unit="m",
+                paths=paths,
+                tools=tools,
+                model_name=model_name,
+                output_dir=output_dir,
+            )
+
+            if asset_result is None:
+                print(f"[Chunking] Skipping {asset_name}: no asset result")
+                continue
+
+            if not asset_result.get("b3dm_map"):
+                print(f"[Chunking] Skipping {asset_name}: no b3dm output")
+                continue
+
+            building_entries.append({
+                "name": asset_name,
+                "bbox": asset_result["bbox"],
+                "lod_plan": asset_result["lod_plan"],
+                "b3dm_map": asset_result["b3dm_map"],
+                "offset_x": record["offset_x"],
+                "offset_y": record["offset_y"],
+                "offset_z": record["offset_z"],
+                "analysis": asset_result["analysis"],
+            })
+
+        except Exception as exc:
+            print(f"[Chunking] Skipping {asset_name}: {exc}")
+            continue
+
+    if not building_entries:
+        raise RuntimeError("Spatial chunking finished, but no valid chunks were processed")
+
+    print(f"[Chunking] Valid processed chunks: {len(building_entries)}")
+
+    tileset_path = build_model_tileset(
+        output_folder=output_dir,
+        bbox=bbox,
+        lon=lon,
+        lat=lat,
+        height=height,
+        chunks=building_entries,
+    )
+
+    analysis_payload = {
+        "source_type": "spatial_chunks",
+        "chunk_count": len(building_entries),
+        "chunk_size_m": chunk_size_m,
+        "faces": meta.get("faces", 0),
+        "vertices": meta.get("vertices", 0),
+        "diagonal": meta.get("diagonal", 0),
+        "has_texture": meta.get("has_texture", False),
+    }
+
+    lod_plan_payload = [
+        {
+            "name": "spatial-chunks",
+            "ratio": 1.0,
+            "target_faces": meta.get("faces", 0),
+            "geometric_error": max(float(bbox["width"]), float(bbox["depth"])) * 0.5,
+        }
+    ]
+
+    return {
+        "bbox": bbox,
+        "tileset_path": tileset_path,
+        "analysis": analysis_payload,
+        "lod_plan": lod_plan_payload,
     }
 
 
@@ -417,6 +533,7 @@ def build_model_artifacts(model, paths, tools):
     shutil.rmtree(output_dir, ignore_errors=True)
     shutil.rmtree(citygml_dir, ignore_errors=True)
 
+    # ------------------------------------------------------------------ CityGML
     if ext in {".gml", ".xml"}:
         parse_start = time.perf_counter()
         print(f"[Pipeline] Parsing CityGML for {name} from {os.path.basename(source_path)}")
@@ -425,9 +542,11 @@ def build_model_artifacts(model, paths, tools):
 
         building_entries = []
         building_start = time.perf_counter()
+
         for building in city_manifest["buildings"]:
             asset_name = building["name"]
             asset_source = os.path.join(citygml_dir, building["file"])
+
             asset_result = process_mesh_asset(
                 asset_name=asset_name,
                 source_path=asset_source,
@@ -437,6 +556,7 @@ def build_model_artifacts(model, paths, tools):
                 model_name=name,
                 output_dir=output_dir,
             )
+
             building_entries.append({
                 "name": asset_name,
                 "bbox": asset_result["bbox"],
@@ -448,10 +568,7 @@ def build_model_artifacts(model, paths, tools):
                 "analysis": asset_result["analysis"],
             })
 
-        normalize_sec = round(parse_sec, 2)
-        lod_plan_sec = 0.0
         lod_sec = time.perf_counter() - building_start
-        b3dm_sec = 0.0
 
         tileset_start = time.perf_counter()
         tileset_path = build_model_tileset(
@@ -480,81 +597,132 @@ def build_model_artifacts(model, paths, tools):
             }
         ]
 
+        # FIX: was missing return — caused 'NoneType' object is not subscriptable
+        return {
+            "bbox": bbox,
+            "tileset_path": tileset_path,
+            "analysis": analysis_payload,
+            "lod_plan": lod_plan_payload,
+            "timings": {
+                "normalize_sec": round(parse_sec, 2),
+                "lod_plan_sec": 0.0,
+                "lod_generation_sec": round(lod_sec, 2),
+                "b3dm_conversion_sec": 0.0,
+                "tileset_build_sec": round(tileset_sec, 2),
+                "total_pipeline_sec": round(time.perf_counter() - overall_start, 2),
+            },
+        }
+
+    # ------------------------------------------------ OBJ / GLB / GLTF (else)
     else:
         single_start = time.perf_counter()
-        asset_result = process_mesh_asset(
-            asset_name=name,
+
+        chunked_result = process_spatially_chunked_mesh(
+            model=model,
             source_path=source_path,
-            unit=unit,
             paths=paths,
             tools=tools,
-            model_name=name,
             output_dir=output_dir,
         )
-        process_sec = time.perf_counter() - single_start
 
-        tileset_start = time.perf_counter()
-        tileset_path = build_model_tileset(
-            output_folder=output_dir,
-            bbox=asset_result["bbox"],
-            lon=lon,
-            lat=lat,
-            height=height,
-            b3dm_map=asset_result["b3dm_map"],
-            lod_plan=asset_result["lod_plan"],
-        )
-        tileset_sec = time.perf_counter() - tileset_start
+        if chunked_result is not None:
+            # ----------------------- spatially chunked path
+            process_sec = time.perf_counter() - single_start
 
-        bbox = asset_result["bbox"]
-        analysis_payload = asset_result["analysis"]
-        lod_plan_payload = asset_result["lod_plan"]
-        normalize_sec = round(process_sec, 2)
-        lod_plan_sec = 0.0
-        lod_sec = 0.0
-        b3dm_sec = 0.0
+            tileset_path = chunked_result["tileset_path"]
+            bbox = chunked_result["bbox"]
+            analysis_payload = chunked_result["analysis"]
+            lod_plan_payload = chunked_result["lod_plan"]
 
-    if not tileset_path:
-        raise RuntimeError("Failed to build model tileset")
+            # FIX: was missing return — caused 'NoneType' object is not subscriptable
+            return {
+                "bbox": bbox,
+                "tileset_path": tileset_path,
+                "analysis": analysis_payload,
+                "lod_plan": lod_plan_payload,
+                "timings": {
+                    "normalize_sec": round(process_sec, 2),
+                    "lod_plan_sec": 0.0,
+                    "lod_generation_sec": 0.0,
+                    "b3dm_conversion_sec": 0.0,
+                    "tileset_build_sec": 0.0,
+                    "total_pipeline_sec": round(time.perf_counter() - overall_start, 2),
+                },
+            }
 
-    total_sec = time.perf_counter() - overall_start
+        else:
+            # ----------------------- single-mesh path
+            asset_result = process_mesh_asset(
+                asset_name=name,
+                source_path=source_path,
+                unit=unit,
+                paths=paths,
+                tools=tools,
+                model_name=name,
+                output_dir=output_dir,
+            )
 
-    timings = {
-        "normalize_sec": round(normalize_sec, 2),
-        "lod_plan_sec": round(lod_plan_sec, 2),
-        "lod_generation_sec": round(lod_sec, 2),
-        "b3dm_conversion_sec": round(b3dm_sec, 2),
-        "tileset_build_sec": round(tileset_sec, 2),
-        "total_pipeline_sec": round(total_sec, 2),
-    }
+            process_sec = time.perf_counter() - single_start
 
-    return {
-        "bbox": bbox,
-        "tileset_path": tileset_path,
-        "timings": timings,
-        "lod_plan": lod_plan_payload,
-        "analysis": analysis_payload,
-    }
+            tileset_start = time.perf_counter()
+            tileset_path = build_model_tileset(
+                output_folder=output_dir,
+                bbox=asset_result["bbox"],
+                lon=lon,
+                lat=lat,
+                height=height,
+                b3dm_map=asset_result["b3dm_map"],
+                lod_plan=asset_result["lod_plan"],
+            )
+            tileset_sec = time.perf_counter() - tileset_start
+
+            bbox = asset_result["bbox"]
+            analysis_payload = asset_result["analysis"]
+            lod_plan_payload = asset_result["lod_plan"]
+
+            # FIX: was missing return — caused 'NoneType' object is not subscriptable
+            return {
+                "bbox": bbox,
+                "tileset_path": tileset_path,
+                "analysis": analysis_payload,
+                "lod_plan": lod_plan_payload,
+                "timings": {
+                    "normalize_sec": round(process_sec, 2),
+                    "lod_plan_sec": 0.0,
+                    "lod_generation_sec": 0.0,
+                    "b3dm_conversion_sec": 0.0,
+                    "tileset_build_sec": 0.0,
+                    "total_pipeline_sec": round(time.perf_counter() - overall_start, 2),
+                },
+            }
 
 
 def rebuild_scene(config, paths):
     ready_models = []
+
     for model in config.get("models", []):
         if model.get("status") != "ready":
             continue
+
         model_tileset = os.path.join(paths["tiles_dir"], model["name"], "tileset.json")
         if not os.path.isfile(model_tileset):
             continue
+
         meta_path = os.path.join(paths["tiles_dir"], model["name"], "bbox.json")
+
         bbox = {"width": 20.0, "depth": 20.0, "height": 10.0}
         lod_plan = []
+
         if os.path.isfile(meta_path):
             with open(meta_path, "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
+
             if isinstance(payload, dict) and "bbox" in payload:
                 bbox = payload.get("bbox", bbox)
                 lod_plan = payload.get("lod_plan", [])
             else:
                 bbox = payload
+
         ready_models.append({**model, "_bbox": bbox, "_lod_plan": lod_plan})
 
     return build_scene_tileset(
@@ -566,12 +734,17 @@ def rebuild_scene(config, paths):
 
 def write_bbox_json(output_dir, bbox, lod_plan=None, analysis=None):
     os.makedirs(output_dir, exist_ok=True)
+
     bbox_path = os.path.join(output_dir, "bbox.json")
     payload = {"bbox": bbox}
+
     if lod_plan is not None:
         payload["lod_plan"] = lod_plan
+
     if analysis is not None:
         payload["analysis"] = analysis
+
     with open(bbox_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
+
     return bbox_path

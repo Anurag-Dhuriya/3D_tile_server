@@ -1,30 +1,18 @@
 {
   "bbox": {
-    "width": 12.437744140625,
-    "depth": 14.650162696838379,
-    "height": 6.753078460693359
+    "width": 12.4377441406,
+    "depth": 6.753079176000001,
+    "height": 14.650163574300002
   },
   "lod_plan": [
     {
       "name": "lod0",
-      "ratio": 0.0592,
-      "target_faces": 254,
-      "geometric_error": 11.735
+      "ratio": 0.154,
+      "target_faces": 800,
+      "geometric_error": 7.743
     },
     {
       "name": "lod1",
-      "ratio": 0.1231,
-      "target_faces": 527,
-      "geometric_error": 9.073
-    },
-    {
-      "name": "lod2",
-      "ratio": 0.372,
-      "target_faces": 1593,
-      "geometric_error": 4.948
-    },
-    {
-      "name": "lod3",
       "ratio": 1.0,
       "target_faces": 4281,
       "geometric_error": 0.0
@@ -32,21 +20,21 @@
   ],
   "analysis": {
     "faces": 4281,
-    "vertices": 3351,
-    "diagonal": 20.369801546597525,
+    "vertices": 6501,
+    "diagonal": 20.3698,
     "file_size_bytes": 306406,
-    "disconnected_parts": 256,
-    "geometric_complexity": 0.6864,
-    "fine_detail_score": 0.4424,
-    "repeated_structure_score": 0.9871,
+    "disconnected_parts": 1295,
+    "geometric_complexity": 0.5121,
+    "fine_detail_score": 0.287,
+    "repeated_structure_score": 0.0,
     "slenderness": 2.1694,
     "face_score": 0.4411,
-    "vertex_score": 0.4123,
+    "vertex_score": 0.4901,
     "size_score": 0.5284,
     "file_score": 0.2186,
     "component_score": 1.0,
     "aspect_score": 0.1169,
-    "detail_score": 0.505,
-    "preservation_bias": 0.6539
+    "detail_score": 0.445,
+    "preservation_bias": 0.4296
   }
 }

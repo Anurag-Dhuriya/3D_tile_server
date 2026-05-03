@@ -2,28 +2,28 @@
   "asset": {
     "version": "1.0"
   },
-  "geometricError": 23.47,
+  "geometricError": 15.486,
   "root": {
     "boundingVolume": {
       "box": [
         0.0,
         0.0,
-        3.3765392303466797,
-        6.2188720703125,
+        7.325081787150001,
+        6.2188720703,
         0.0,
         0.0,
         0.0,
-        7.3250813484191895,
+        3.3765395880000004,
         0.0,
         0.0,
         0.0,
-        3.3765392303466797
+        7.325081787150001
       ]
     },
-    "geometricError": 11.735,
+    "geometricError": 7.743,
     "refine": "REPLACE",
     "content": {
-      "uri": "lod0/content.b3dm"
+      "uri": "buildings/sample/lod0/content.b3dm"
     },
     "children": [
       {
@@ -31,73 +31,23 @@
           "box": [
             0.0,
             0.0,
-            3.3765392303466797,
-            6.2188720703125,
+            7.325081787150001,
+            6.2188720703,
             0.0,
             0.0,
             0.0,
-            7.3250813484191895,
+            3.3765395880000004,
             0.0,
             0.0,
             0.0,
-            3.3765392303466797
+            7.325081787150001
           ]
         },
-        "geometricError": 9.073,
+        "geometricError": 0.0,
         "refine": "REPLACE",
         "content": {
-          "uri": "lod1/content.b3dm"
-        },
-        "children": [
-          {
-            "boundingVolume": {
-              "box": [
-                0.0,
-                0.0,
-                3.3765392303466797,
-                6.2188720703125,
-                0.0,
-                0.0,
-                0.0,
-                7.3250813484191895,
-                0.0,
-                0.0,
-                0.0,
-                3.3765392303466797
-              ]
-            },
-            "geometricError": 4.948,
-            "refine": "REPLACE",
-            "content": {
-              "uri": "lod2/content.b3dm"
-            },
-            "children": [
-              {
-                "boundingVolume": {
-                  "box": [
-                    0.0,
-                    0.0,
-                    3.3765392303466797,
-                    6.2188720703125,
-                    0.0,
-                    0.0,
-                    0.0,
-                    7.3250813484191895,
-                    0.0,
-                    0.0,
-                    0.0,
-                    3.3765392303466797
-                  ]
-                },
-                "geometricError": 0.0,
-                "refine": "REPLACE",
-                "content": {
-                  "uri": "lod3/content.b3dm"
-                }
-              }
-            ]
-          }
-        ]
+          "uri": "buildings/sample/lod1/content.b3dm"
+        }
       }
     ],
     "transform": [

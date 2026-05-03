@@ -102,16 +102,18 @@ def build_model_tileset(output_folder, bbox, lon, lat, height, b3dm_map=None, lo
         if not children:
             return None
 
+        # FIX: Empty parent wrapper needs a massive error to force refinement to chunks
         root = {
             "boundingVolume": make_box_bounding_volume(bbox),
-            "geometricError": max(root_error * 1.5, 1.0),
+            "geometricError": 10000000.0,
             "refine": "ADD",
             "transform": east_north_up_transform(lon, lat, height),
             "children": children,
         }
+        # FIX: Tileset wrapper needs massive error
         tileset = {
             "asset": {"version": "1.0"},
-            "geometricError": max(root_error * 2.0, 1.0),
+            "geometricError": 10000000.0,
             "root": root,
         }
     else:
@@ -121,10 +123,11 @@ def build_model_tileset(output_folder, bbox, lon, lat, height, b3dm_map=None, lo
 
         root["transform"] = east_north_up_transform(lon, lat, height)
 
-        root_error = float(lod_plan[0].get("geometric_error", 0.0))
+        # The root node here HAS content (lod0.b3dm), so it keeps its calculated error.
+        # FIX: But the tileset wrapper needs to be huge so the viewer loads the root.
         tileset = {
             "asset": {"version": "1.0"},
-            "geometricError": max(root_error * 2.0, 1.0),
+            "geometricError": 10000000.0,
             "root": root,
         }
 
@@ -175,9 +178,6 @@ def build_scene_tileset(scene_dir, tiles_dir, ready_models, max_depth=4, max_per
     if not leaves:
         return None
 
-    scene_root_error = max(200.0, len(valid_models) * 40.0)
-    cell_error = max(80.0, scene_root_error / 2.0)
-
     scene_children = []
     for leaf in leaves:
         model_children = []
@@ -200,10 +200,11 @@ def build_scene_tileset(scene_dir, tiles_dir, ready_models, max_depth=4, max_per
 
         if not model_children:
             continue
-
+        
+        # FIX: Empty quadtree cells must force refinement down to the actual models
         scene_children.append({
             "boundingVolume": leaf.bounds.to_region(),
-            "geometricError": cell_error,
+            "geometricError": 10000000.0,
             "refine": "ADD",
             "children": model_children,
         })
@@ -211,12 +212,13 @@ def build_scene_tileset(scene_dir, tiles_dir, ready_models, max_depth=4, max_per
     if not scene_children:
         return None
 
+    # FIX: Force scene rendering on both the tileset object and the empty root node
     scene_tileset = {
         "asset": {"version": "1.0"},
-        "geometricError": scene_root_error,
+        "geometricError": 10000000.0,
         "root": {
             "boundingVolume": tree.bounds.to_region(),
-            "geometricError": cell_error,
+            "geometricError": 10000000.0,
             "refine": "ADD",
             "children": scene_children,
         },

@@ -12,9 +12,9 @@
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/sample/tileset.json",
       "error": null,
-      "processed_at": "2026-04-19 14:55:08",
-      "processing_started_at": 1776590698.961548,
-      "processing_duration_sec": 9.38
+      "processed_at": "2026-05-03 13:41:10",
+      "processing_started_at": 1777795863.145141,
+      "processing_duration_sec": 7.0
     },
     {
       "name": "building2",
@@ -61,16 +61,16 @@
     {
       "name": "new_model",
       "file": "new_model.obj",
-      "unit": "cm",
-      "lon": 72.5714,
-      "lat": 23.0225,
+      "unit": "mm",
+      "lon": 60,
+      "lat": 55,
       "height": 0,
-      "status": "ready",
-      "tileset_url": "http://localhost:8080/tiles/new_model/tileset.json",
+      "status": "processing",
+      "tileset_url": null,
       "error": null,
-      "processed_at": "2026-04-29 23:39:04",
-      "processing_started_at": 1777486090.71814,
-      "processing_duration_sec": 54.02
+      "processed_at": null,
+      "processing_started_at": 1777702435.3311,
+      "processing_duration_sec": null
     }
   ]
 }

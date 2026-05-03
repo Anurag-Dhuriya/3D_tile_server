@@ -5,3 +5,11 @@
 # - Node.js 3d-tiles-tools CLI, install with: npm install -g 3d-tiles-tools
 
 pyproj==3.7.1
+numpy
+trimesh
+open3d
+pyproj
+lxml
+pillow
+scipy
+networkx

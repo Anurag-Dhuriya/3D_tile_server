@@ -73,10 +73,10 @@ for path in PATHS.values():
 
 
 TOOLS = {
-    "blender_path": "/Applications/Blender.app/Contents/MacOS/Blender",
-    "blender_script": os.path.join(DIRECTORY, "blender_process.py"),
     "tiles_tools_path": shutil.which("3d-tiles-tools") or "/opt/homebrew/bin/3d-tiles-tools",
+    "gltf_transform_path": shutil.which("gltf-transform") or "/opt/homebrew/bin/gltf-transform",
 }
+
 
 
 CONFIG = load_config()
@@ -86,12 +86,14 @@ HOST = CONFIG.get("host", "0.0.0.0")
 
 def tool_status_errors():
     errors = []
-    if not os.path.isfile(TOOLS["blender_path"]):
-        errors.append(f"Blender not found: {TOOLS['blender_path']}")
-    if not os.path.isfile(TOOLS["blender_script"]):
-        errors.append(f"blender_process.py not found: {TOOLS['blender_script']}")
+
     if not os.path.isfile(TOOLS["tiles_tools_path"]):
         errors.append(f"3d-tiles-tools not found: {TOOLS['tiles_tools_path']}")
+
+    if not os.path.isfile(TOOLS["gltf_transform_path"]):
+        print(f"[Server] WARNING: gltf-transform not found: {TOOLS['gltf_transform_path']}")
+        print("[Server] GLB optimization will be skipped, but processing can continue.")
+
     return errors
 
 
@@ -606,7 +608,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def status_page(self):
         config = load_config()
         models = config.get("models", [])
-        blender_ok = os.path.isfile(TOOLS["blender_path"])
+        mesh_backend_ok = True
         tiles_tools_ok = os.path.isfile(TOOLS["tiles_tools_path"])
 
         rows = ""
@@ -658,7 +660,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
   <h2>Tools</h2>
   <table>
     <tr><th>Tool</th><th>Status</th></tr>
-    <tr><td>Blender</td><td>{'Found' if blender_ok else 'Not Found'}</td></tr>
+    <tr><td>Mesh backend</td><td>trimesh + pymeshlab</td></tr>
     <tr><td>3d-tiles-tools</td><td>{'Found' if tiles_tools_ok else 'Not Found'}</td></tr>
   </table>
   <h2>Models ({len(models)})</h2>
@@ -723,8 +725,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             print(f"[Server] {args[0]} {args[1]}")
 
 
-print(f"[Server] Blender        : {TOOLS['blender_path']}")
+print(f"[Server] Mesh backend   : trimesh + pymeshlab")
 print(f"[Server] 3d-tiles-tools : {TOOLS['tiles_tools_path']}")
+print(f"[Server] gltf-transform : {TOOLS['gltf_transform_path']}")
 print(f"[Server] Config         : {CONFIG_PATH}")
 print("")
 print("  3D Tile Server")

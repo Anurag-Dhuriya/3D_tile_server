@@ -7,12 +7,18 @@
   "lod_plan": [
     {
       "name": "lod0",
-      "ratio": 0.154,
-      "target_faces": 800,
-      "geometric_error": 7.743
+      "ratio": 0.0458,
+      "target_faces": 196,
+      "geometric_error": 12.741
     },
     {
       "name": "lod1",
+      "ratio": 0.154,
+      "target_faces": 659,
+      "geometric_error": 7.743
+    },
+    {
+      "name": "lod2",
       "ratio": 1.0,
       "target_faces": 4281,
       "geometric_error": 0.0

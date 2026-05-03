@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 import numpy as np
-import pymeshlab
+import open3d as o3d
 import trimesh
 import trimesh.repair
 
@@ -197,77 +197,74 @@ def analyze_mesh(mesh, source_path, bbox):
     }
 
 
-def pymeshlab_cleanup(ms):
-    filters = [
-        ("meshing_remove_unreferenced_vertices", {}),
-        ("meshing_remove_duplicate_faces", {}),
-        ("meshing_remove_null_faces", {}),
-        ("meshing_repair_non_manifold_edges", {}),
-        ("meshing_repair_non_manifold_vertices", {}),
-    ]
+def _trimesh_to_open3d(mesh):
+    """Convert a trimesh.Trimesh to an open3d.geometry.TriangleMesh."""
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(
+        np.asarray(mesh.vertices, dtype=np.float64)
+    )
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(
+        np.asarray(mesh.faces, dtype=np.int32)
+    )
+    if mesh.vertex_normals is not None and len(mesh.vertex_normals):
+        o3d_mesh.vertex_normals = o3d.utility.Vector3dVector(
+            np.asarray(mesh.vertex_normals, dtype=np.float64)
+        )
+    return o3d_mesh
 
-    for filter_name, kwargs in filters:
-        try:
-            ms.apply_filter(filter_name, **kwargs)
-        except Exception:
-            pass
+
+def _open3d_to_trimesh(o3d_mesh):
+    """Convert an open3d.geometry.TriangleMesh back to trimesh.Trimesh."""
+    vertices = np.asarray(o3d_mesh.vertices, dtype=np.float64)
+    faces = np.asarray(o3d_mesh.triangles, dtype=np.int64)
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
 
-def decimate_with_pymeshlab(input_glb, output_glb, target_faces):
+def _open3d_clean(o3d_mesh):
+    """Run standard Open3D cleanup passes on a TriangleMesh."""
+    o3d_mesh.remove_duplicated_vertices()
+    o3d_mesh.remove_duplicated_triangles()
+    o3d_mesh.remove_degenerate_triangles()
+    o3d_mesh.remove_unreferenced_vertices()
+    o3d_mesh.compute_vertex_normals()
+    return o3d_mesh
+
+
+def decimate_with_open3d(input_glb, output_glb, target_faces):
+    """
+    Decimate input_glb to approximately target_faces using Open3D's
+    quadric-error metric simplification, then export to output_glb.
+    """
     os.makedirs(os.path.dirname(output_glb), exist_ok=True)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_obj = os.path.join(temp_dir, "input.obj")
-        temp_decimated_obj = os.path.join(temp_dir, "decimated.obj")
+    input_mesh = load_as_mesh(input_glb)
+    input_mesh = clean_trimesh(input_mesh)
 
-        input_mesh = load_as_mesh(input_glb)
-        input_mesh.export(temp_obj)
+    input_face_count = len(input_mesh.faces)
+    safe_target = max(4, min(int(target_faces), input_face_count))
 
-        ms = pymeshlab.MeshSet()
-        ms.load_new_mesh(temp_obj)
+    print(f"[Mesh] QEM target faces : {safe_target} (from {input_face_count})")
 
-        pymeshlab_cleanup(ms)
+    o3d_mesh = _trimesh_to_open3d(input_mesh)
+    o3d_mesh = _open3d_clean(o3d_mesh)
 
-        print(f"[Mesh] QEM target faces : {target_faces}")
+    decimated = o3d_mesh.simplify_quadric_decimation(
+        target_number_of_triangles=safe_target,
+        maximum_error=float("inf"),
+        boundary_weight=1.0,
+    )
+    decimated = _open3d_clean(decimated)
 
-        used_texture_filter = False
+    result_mesh = _open3d_to_trimesh(decimated)
+    result_mesh = clean_trimesh(result_mesh)
 
-        try:
-            ms.apply_filter(
-                "meshing_decimation_quadric_edge_collapse_with_texture",
-                targetfacenum=int(target_faces),
-                preserveboundary=True,
-                qualitythr=0.3,
-                autoclean=True,
-            )
-            used_texture_filter = True
-        except Exception:
-            ms.apply_filter(
-                "meshing_decimation_quadric_edge_collapse",
-                targetfacenum=int(target_faces),
-                preservetopology=False,
-                preserveboundary=True,
-                optimalplacement=True,
-                planarquadric=True,
-                autoclean=True,
-            )
+    actual_faces = len(result_mesh.faces)
+    print(f"[Mesh] Decimation       : Open3D QEM ({actual_faces} faces achieved)")
 
-        ms.save_current_mesh(
-            temp_decimated_obj,
-            save_textures=True,
-            save_wedge_texcoord=True,
-            save_vertex_normal=True,
-            save_wedge_normal=True,
-        )
+    result_mesh.export(output_glb, file_type="glb")
 
-        decimated_mesh = load_as_mesh(temp_decimated_obj)
-        decimated_mesh = clean_trimesh(decimated_mesh)
-        decimated_mesh.export(output_glb, file_type="glb")
-
-        print(
-            "[Mesh] Decimation       : "
-            + ("texture-aware QEM" if used_texture_filter else "QEM")
-        )
+    if not os.path.isfile(output_glb):
+        raise RuntimeError(f"Open3D decimation: GLB not created at {output_glb}")
 
     return output_glb
 
@@ -319,7 +316,7 @@ def generate_lod_glb(input_glb, output_glb, ratio, target_faces, tools=None):
 
     raw_lod = output_glb.replace(".glb", "_raw.glb")
 
-    decimate_with_pymeshlab(
+    decimate_with_open3d(
         input_glb=input_glb,
         output_glb=raw_lod,
         target_faces=target_faces,

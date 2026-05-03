@@ -660,7 +660,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
   <h2>Tools</h2>
   <table>
     <tr><th>Tool</th><th>Status</th></tr>
-    <tr><td>Mesh backend</td><td>trimesh + pymeshlab</td></tr>
+    <tr><td>Mesh backend</td><td>trimesh + open3d</td></tr>
     <tr><td>3d-tiles-tools</td><td>{'Found' if tiles_tools_ok else 'Not Found'}</td></tr>
   </table>
   <h2>Models ({len(models)})</h2>
@@ -725,7 +725,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             print(f"[Server] {args[0]} {args[1]}")
 
 
-print(f"[Server] Mesh backend   : trimesh + pymeshlab")
+print(f"[Server] Mesh backend   : trimesh + open3d")
 print(f"[Server] 3d-tiles-tools : {TOOLS['tiles_tools_path']}")
 print(f"[Server] gltf-transform : {TOOLS['gltf_transform_path']}")
 print(f"[Server] Config         : {CONFIG_PATH}")

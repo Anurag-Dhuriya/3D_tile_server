@@ -42,7 +42,7 @@
                 14.650163574300002
               ]
             },
-            "geometricError": 7.743,
+            "geometricError": 12.741,
             "refine": "REPLACE",
             "content": {
               "uri": "../tiles/sample/tileset.json"

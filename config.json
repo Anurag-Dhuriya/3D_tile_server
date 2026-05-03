@@ -12,9 +12,9 @@
       "status": "ready",
       "tileset_url": "http://localhost:8080/tiles/sample/tileset.json",
       "error": null,
-      "processed_at": "2026-05-03 13:41:10",
-      "processing_started_at": 1777795863.145141,
-      "processing_duration_sec": 7.0
+      "processed_at": "2026-05-03 22:41:12",
+      "processing_started_at": 1777828267.093777,
+      "processing_duration_sec": 4.89
     },
     {
       "name": "building2",

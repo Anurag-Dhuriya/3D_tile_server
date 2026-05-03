@@ -47,6 +47,40 @@
             "content": {
               "uri": "../tiles/sample/tileset.json"
             }
+          },
+          {
+            "boundingVolume": {
+              "region": [
+                1.2665039322514908,
+                0.4017651144538788,
+                1.2667158133121348,
+                0.4018717396269103,
+                0.0,
+                1465.01635743
+              ]
+            },
+            "geometricError": 621.88720703,
+            "refine": "REPLACE",
+            "content": {
+              "uri": "../tiles/sample_model/tileset.json"
+            }
+          },
+          {
+            "boundingVolume": {
+              "region": [
+                1.2588873915896925,
+                0.4012207378421022,
+                1.274332353973933,
+                0.40241611623868684,
+                0.0,
+                76221.589844
+              ]
+            },
+            "geometricError": 45332.1523435,
+            "refine": "REPLACE",
+            "content": {
+              "uri": "../tiles/new_model_test/tileset.json"
+            }
           }
         ]
       }

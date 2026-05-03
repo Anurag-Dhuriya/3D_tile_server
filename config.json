@@ -71,6 +71,34 @@
       "processed_at": null,
       "processing_started_at": 1777702435.3311,
       "processing_duration_sec": null
+    },
+    {
+      "name": "sample_model",
+      "file": "sample.obj",
+      "unit": "m",
+      "lon": 72.5714,
+      "lat": 23.0225,
+      "height": 0.0,
+      "status": "ready",
+      "tileset_url": "http://localhost:8080/tiles/sample_model/tileset.json",
+      "error": null,
+      "processed_at": "2026-05-04 00:04:54",
+      "processing_started_at": 1777833290.823112,
+      "processing_duration_sec": 4.16
+    },
+    {
+      "name": "new_model_test",
+      "file": "new_model.obj",
+      "unit": "m",
+      "lon": 72.5714,
+      "lat": 23.0225,
+      "height": 0.0,
+      "status": "ready",
+      "tileset_url": "http://localhost:8080/tiles/new_model_test/tileset.json",
+      "error": null,
+      "processed_at": "2026-05-03 23:52:59",
+      "processing_started_at": 1777832370.435049,
+      "processing_duration_sec": 208.82
     }
   ]
 }

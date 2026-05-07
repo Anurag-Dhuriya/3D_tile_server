@@ -50,6 +50,7 @@ def extract_citygml_buildings(gml_path, output_dir):
             building.attrib.get(f"{{{GML_NAMESPACE}}}id")
             or f"building_{index:05d}"
         )
+
         file_name = f"{sanitize_building_id(building_id)}.obj"
         output_path = os.path.join(output_dir, file_name)
 

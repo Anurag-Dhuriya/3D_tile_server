@@ -7,6 +7,10 @@ def sanitize_building_id(building_id):
 
 
 def export_obj(path, vertices, faces):
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
     with open(path, "w", encoding="utf-8") as handle:
         for vx, vy, vz in vertices:
             handle.write(f"v {vx:.6f} {vy:.6f} {vz:.6f}\n")
@@ -15,6 +19,8 @@ def export_obj(path, vertices, faces):
 
 
 def write_manifest(output_dir, manifest):
+    os.makedirs(output_dir, exist_ok=True)
+
     manifest_path = os.path.join(output_dir, "citygml_manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2)

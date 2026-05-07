@@ -29,17 +29,24 @@ def make_box_bounding_volume(bbox):
     half_d = depth / 2.0
     half_h = height / 2.0
 
+    # 3D Tiles 'box': [cx, cy, cz,  x_half_x, x_half_y, x_half_z,
+    #                             y_half_x, y_half_y, y_half_z,
+    #                             z_half_x, z_half_y, z_half_z]
+    # Centre is at (0, 0, half_h) so the box sits above Z=0.
+    # Z half-axis vector is (0, 0, half_h) — same magnitude, different role.
     return {
         "box": [
-            0.0, 0.0, half_h,
-            half_w, 0.0, 0.0,
-            0.0, half_d, 0.0,
-            0.0, 0.0, half_h,
+            0.0, 0.0, half_h,    # centre: positioned at mid-height above ground
+            half_w, 0.0, 0.0,    # X half-axis
+            0.0, half_d, 0.0,    # Y half-axis
+            0.0, 0.0, half_h,    # Z half-axis
         ]
     }
 
 
 def local_translation_transform(x, y, z):
+    # 3D Tiles / glTF transforms are column-major. For a pure translation matrix,
+    # tx/ty/tz sit at indices 12/13/14 (the 4th column). The layout below is correct.
     return [
         1.0, 0.0, 0.0, 0.0,
         0.0, 1.0, 0.0, 0.0,
@@ -49,7 +56,7 @@ def local_translation_transform(x, y, z):
 
 
 def build_model_tileset(output_folder, bbox, lon, lat, height, b3dm_map=None, lod_plan=None, chunks=None):
-    if not lod_plan:
+    if lod_plan is None:
         lod_plan = fallback_lod_plan(bbox)
 
     def make_node(level_plan, content_map, local_bbox, level_index):
@@ -57,6 +64,7 @@ def build_model_tileset(output_folder, bbox, lon, lat, height, b3dm_map=None, lo
         level_name = level["name"]
         content_path = content_map.get(level_name)
         if not content_path:
+            print(f"[Tileset] WARNING: no b3dm content for level '{level_name}' — subtree will be skipped")
             return None
 
         node = {
@@ -102,15 +110,16 @@ def build_model_tileset(output_folder, bbox, lon, lat, height, b3dm_map=None, lo
         if not children:
             return None
 
-        # FIX: Empty parent wrapper needs a massive error to force refinement to chunks
+        # root_error holds the max geometric error across all chunks — use it for the
+        # root node so refinement thresholds are data-driven, not magic constants.
         root = {
             "boundingVolume": make_box_bounding_volume(bbox),
-            "geometricError": 10000000.0,
+            "geometricError": root_error,
             "refine": "ADD",
             "transform": east_north_up_transform(lon, lat, height),
             "children": children,
         }
-        # FIX: Tileset wrapper needs massive error
+        # Tileset wrapper uses a large error so the viewer always loads the root.
         tileset = {
             "asset": {"version": "1.0"},
             "geometricError": 10000000.0,
@@ -142,7 +151,7 @@ def _scene_model_region(model):
     bbox = model.get("_bbox") or {}
     width = float(bbox.get("width", 20.0))
     depth = float(bbox.get("depth", 20.0))
-    height = float(bbox.get("height", 20.0))
+    height = float(bbox.get("height", 10.0))  # vertical SIZE — default matches make_box_bounding_volume
     lon = float(model["lon"])
     lat = float(model["lat"])
     base_height = float(model.get("height", 0.0))
@@ -184,6 +193,10 @@ def build_scene_tileset(scene_dir, tiles_dir, ready_models, max_depth=4, max_per
         for model in leaf.models:
             model_tileset = os.path.join(tiles_dir, model["name"], "tileset.json")
             if not os.path.isfile(model_tileset):
+                continue
+
+            if "lon" not in model or "lat" not in model:
+                print(f"[Tileset] WARNING: skipping model '{model.get('name')}' — missing lon/lat in config")
                 continue
 
             lod_plan = model.get("_lod_plan") or fallback_lod_plan(model.get("_bbox") or {})

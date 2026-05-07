@@ -67,5 +67,6 @@ def build_local_mesh(transformed_polygons):
         "offset_x": center_x,
         "offset_y": center_y,
         "offset_z": min_z,
-        "points": building_points,
+        # Removed "points": building_points — redundant copy of pre-centered
+        # geometry. bbox, offset_*, and vertices already capture everything needed.
     }

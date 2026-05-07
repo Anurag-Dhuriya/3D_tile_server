@@ -11,8 +11,14 @@ def should_spatially_chunk(meta, bbox, mode="auto"):
     if mode is True:
         return True
 
+    if mode is False:
+        return False
+
     if str(mode).lower() in {"false", "off", "none", "no"}:
         return False
+
+    if str(mode).lower() not in {"auto", "true", "on", "yes"}:
+        print(f"[Chunking] WARNING: unrecognised chunk mode '{mode}', falling back to auto heuristics")
 
     faces = int(meta.get("faces", 0))
     width = float(bbox.get("width", 0.0))
@@ -32,6 +38,8 @@ def should_spatially_chunk(meta, bbox, mode="auto"):
 
 
 def cell_key_from_xy(x, y, min_x, min_y, chunk_size):
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
     ix = int(math.floor((x - min_x) / chunk_size))
     iy = int(math.floor((y - min_y) / chunk_size))
     return ix, iy
@@ -61,7 +69,7 @@ def collect_cell_meshes(scene, chunk_size):
 
     cells = {}
 
-    for mesh_index, mesh in enumerate(iter_scene_meshes(scene)):
+    for mesh in iter_scene_meshes(scene):
         if len(mesh.faces) == 0:
             continue
 
@@ -110,6 +118,9 @@ def combined_bounds(meshes):
         if len(mesh.vertices) > 0:
             bounds.append(mesh.bounds)
 
+    if not bounds:
+        raise RuntimeError("combined_bounds: all meshes have zero vertices")
+
     mins = np.min([item[0] for item in bounds], axis=0)
     maxs = np.max([item[1] for item in bounds], axis=0)
 
@@ -124,7 +135,9 @@ def export_cell_glb(cell_meshes, output_path, offset):
         local_mesh.apply_translation(-offset)
         scene.add_geometry(local_mesh, node_name=f"part_{index:03d}")
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    _dir = os.path.dirname(output_path)
+    if _dir:
+        os.makedirs(_dir, exist_ok=True)
     scene.export(output_path, file_type="glb")
 
     if not os.path.isfile(output_path):
@@ -143,13 +156,6 @@ def chunk_scene_to_glb_assets(
 
     if not cells:
         raise RuntimeError("Spatial chunking produced no cells")
-
-    if len(cells) > max_chunks:
-        raise RuntimeError(
-            f"Spatial chunking produced {len(cells)} chunks, "
-            f"which is above max_chunks={max_chunks}. "
-            f"Increase chunk_size_m or max_chunks."
-        )
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -198,6 +204,14 @@ def chunk_scene_to_glb_assets(
             "cell_x": int(ix),
             "cell_y": int(iy),
         })
+
+    # Check max_chunks after filtering so small-face cells don't cause false errors (Bug 5)
+    if len(records) > max_chunks:
+        raise RuntimeError(
+            f"Spatial chunking produced {len(records)} usable chunks, "
+            f"which is above max_chunks={max_chunks}. "
+            f"Increase chunk_size_m or max_chunks."
+        )
 
     if not records:
         raise RuntimeError("Spatial chunking produced no usable chunk files")

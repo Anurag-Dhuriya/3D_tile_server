@@ -22,6 +22,16 @@ DEFAULT_CONFIG = {
 }
 
 
+MODEL_PIPELINE_FIELDS = [
+    "spatial_chunking",
+    "chunk_size_m",
+    "max_chunks",
+    "max_octree_depth",
+    "faces_per_cell",
+    "pipeline",
+]
+
+
 def load_config():
     with CONFIG_LOCK:
         if not os.path.isfile(CONFIG_PATH):
@@ -56,8 +66,12 @@ def update_model_fields(name, **fields):
     return config["models"][index]
 
 
-def model_tileset_url(name):
-    return f"http://localhost:{PORT}/tiles/{name}/tileset.json"
+def update_model_stage(name, stage, detail=None):
+    return update_model_fields(
+        name,
+        processing_stage=stage,
+        processing_detail=detail,
+    )
 
 
 PATHS = {
@@ -78,10 +92,23 @@ TOOLS = {
 }
 
 
-
 CONFIG = load_config()
 PORT = int(CONFIG.get("port", 8080))
 HOST = CONFIG.get("host", "0.0.0.0")
+
+_MODEL_LOCKS = {}
+_MODEL_LOCKS_LOCK = threading.Lock()
+
+
+def _get_model_lock(name):
+    with _MODEL_LOCKS_LOCK:
+        if name not in _MODEL_LOCKS:
+            _MODEL_LOCKS[name] = threading.Lock()
+        return _MODEL_LOCKS[name]
+
+
+def model_tileset_url(name):
+    return f"http://localhost:{PORT}/tiles/{name}/tileset.json"
 
 
 def tool_status_errors():
@@ -98,6 +125,16 @@ def tool_status_errors():
 
 
 def process_model(name):
+    lock = _get_model_lock(name)
+    if not lock.acquire(blocking=False):
+        return False, f"Model '{name}' is already being processed"
+    try:
+        return _process_model_impl(name)
+    finally:
+        lock.release()
+
+
+def _process_model_impl(name):
     config = load_config()
     _, model = find_model(config, name)
     if model is None:
@@ -114,6 +151,8 @@ def process_model(name):
             processed_at=None,
             processing_started_at=processing_started_at,
             processing_duration_sec=None,
+            processing_stage="error",
+            processing_detail=error,
         )
         return False, error
 
@@ -124,11 +163,18 @@ def process_model(name):
         tileset_url=None,
         processing_started_at=processing_started_at,
         processing_duration_sec=None,
+        processing_stage="starting",
+        processing_detail="Preparing pipeline",
     )
 
     try:
         print(f"\n[Server] Processing model: {name}")
-        result = build_model_artifacts(model, PATHS, TOOLS)
+
+        def stage_hook(stage, detail=None):
+            update_model_stage(name, stage, detail)
+
+        result = build_model_artifacts(model, PATHS, TOOLS, stage_hook=stage_hook)
+
         write_bbox_json(
             os.path.join(PATHS["tiles_dir"], name),
             result["bbox"],
@@ -147,6 +193,7 @@ def process_model(name):
         print(f"[Timing] {name} tileset build       : {timings['tileset_build_sec']:.2f}s")
         print(f"[Timing] {name} full pipeline       : {timings['total_pipeline_sec']:.2f}s")
         print(f"[LOD] {name} dynamic levels         : {lod_count}")
+
         if analysis:
             print(
                 f"[Analyzer] {name} detail={analysis.get('detail_score', 0):.3f}, "
@@ -164,7 +211,10 @@ def process_model(name):
             processed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             processing_started_at=processing_started_at,
             processing_duration_sec=timings["total_pipeline_sec"],
+            processing_stage="ready",
+            processing_detail="Processing complete",
         )
+
         print(f"[Server] Ready: {model_tileset_url(name)}")
         return True, model_tileset_url(name)
 
@@ -178,6 +228,8 @@ def process_model(name):
             processed_at=None,
             processing_started_at=processing_started_at,
             processing_duration_sec=failed_after,
+            processing_stage="error",
+            processing_detail=str(exc),
         )
         print(f"[Timing] {name} failed after       : {failed_after:.2f}s")
         print(f"[Server] ERROR processing {name}: {exc}")
@@ -225,6 +277,36 @@ def process_all_pending():
     print(f"[Timing] Full batch + scene     : {batch_elapsed:.2f}s")
 
 
+def _coerce_model_body(body):
+    model = {}
+
+    if "file" in body:
+        model["file"] = body["file"]
+    if "unit" in body:
+        model["unit"] = body["unit"]
+    if "lon" in body:
+        model["lon"] = float(body["lon"])
+    if "lat" in body:
+        model["lat"] = float(body["lat"])
+    if "height" in body:
+        model["height"] = float(body["height"])
+
+    if "spatial_chunking" in body:
+        model["spatial_chunking"] = body["spatial_chunking"]
+    if "chunk_size_m" in body:
+        model["chunk_size_m"] = float(body["chunk_size_m"])
+    if "max_chunks" in body:
+        model["max_chunks"] = int(body["max_chunks"])
+    if "max_octree_depth" in body:
+        model["max_octree_depth"] = int(body["max_octree_depth"])
+    if "faces_per_cell" in body:
+        model["faces_per_cell"] = int(body["faces_per_cell"])
+    if "pipeline" in body and isinstance(body["pipeline"], dict):
+        model["pipeline"] = body["pipeline"]
+
+    return model
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
@@ -254,14 +336,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.api_list_models()
             return
         if self.path.startswith("/api/models/") and self.path.endswith("/status"):
-            name = self.path.replace("/api/models/", "").replace("/status", "")
+            raw_name = self.path[len("/api/models/"):-len("/status")]
+            name = os.path.basename(raw_name)
             self.api_model_status(name)
             return
         if self.path == "/tilesets":
             self.api_tilesets()
             return
         if self.path.startswith("/tileset/"):
-            name = self.path.replace("/tileset/", "").strip("/")
+            name = os.path.basename(self.path.replace("/tileset/", "").strip("/"))
             self.legacy_get_tileset(name)
             return
         if self.path == "/status":
@@ -274,7 +357,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.api_add_model()
             return
         if self.path.startswith("/api/models/") and self.path.endswith("/process"):
-            name = self.path.replace("/api/models/", "").replace("/process", "")
+            raw_name = self.path[len("/api/models/"):-len("/process")]
+            name = os.path.basename(raw_name)
             self.api_process_model(name)
             return
         if self.path == "/api/process/all":
@@ -294,7 +378,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_PUT(self):
         if self.path.startswith("/api/models/"):
-            name = self.path.replace("/api/models/", "").strip("/")
+            name = os.path.basename(self.path.replace("/api/models/", "").strip("/"))
             self.api_update_model(name)
             return
         self.send_response(404)
@@ -302,7 +386,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         if self.path.startswith("/api/models/"):
-            name = self.path.replace("/api/models/", "").strip("/")
+            name = os.path.basename(self.path.replace("/api/models/", "").strip("/"))
             self.api_delete_model(name)
             return
         self.send_response(404)
@@ -360,7 +444,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "tileset_url": None,
             "error": None,
             "processed_at": None,
+            "processing_stage": "pending",
+            "processing_detail": None,
         }
+        model.update(_coerce_model_body(body))
         config["models"].append(model)
         save_config(config)
         self._json(201, {"message": f"Added: {model['name']}", "model": model})
@@ -376,15 +463,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(404, {"error": f"Model not found: {name}"})
             return
 
-        for field in ["file", "unit", "lon", "lat", "height"]:
-            if field in body:
-                config["models"][index][field] = body[field]
+        updates = _coerce_model_body(body)
+        for key, value in updates.items():
+            config["models"][index][key] = value
 
-        if any(field in body for field in ["file", "unit", "lon", "lat", "height"]):
+        reset_fields = ["file", "unit", "lon", "lat", "height"] + MODEL_PIPELINE_FIELDS
+        if any(field in body for field in reset_fields):
             config["models"][index]["status"] = "pending"
             config["models"][index]["tileset_url"] = None
             config["models"][index]["error"] = None
             config["models"][index]["processed_at"] = None
+            config["models"][index]["processing_stage"] = "pending"
+            config["models"][index]["processing_detail"] = None
 
         save_config(config)
         self._json(200, {"message": f"Updated: {name}", "model": config["models"][index]})
@@ -475,7 +565,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         fields = self._parse_multipart(raw, boundary)
 
         obj_data = fields.get("obj_file")
-        obj_name = fields.get("obj_filename", b"model.obj").decode()
+        obj_name = os.path.basename(fields.get("obj_filename", b"model.obj").decode())
         unit = fields.get("scale_unit", b"m").decode()
         lon = float(fields.get("lon", b"0").decode())
         lat = float(fields.get("lat", b"0").decode())
@@ -492,35 +582,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         config = load_config()
         index, existing = find_model(config, model_name)
+        base_model = {
+            "name": model_name,
+            "file": obj_name,
+            "unit": unit,
+            "lon": lon,
+            "lat": lat,
+            "height": height,
+            "status": "pending",
+            "tileset_url": None,
+            "error": None,
+            "processed_at": None,
+            "processing_stage": "pending",
+            "processing_detail": None,
+        }
+
         if existing is None:
-            config["models"].append(
-                {
-                    "name": model_name,
-                    "file": obj_name,
-                    "unit": unit,
-                    "lon": lon,
-                    "lat": lat,
-                    "height": height,
-                    "status": "pending",
-                    "tileset_url": None,
-                    "error": None,
-                    "processed_at": None,
-                }
-            )
+            config["models"].append(base_model)
         else:
-            config["models"][index].update(
-                {
-                    "file": obj_name,
-                    "unit": unit,
-                    "lon": lon,
-                    "lat": lat,
-                    "height": height,
-                    "status": "pending",
-                    "tileset_url": None,
-                    "error": None,
-                    "processed_at": None,
-                }
-            )
+            config["models"][index].update(base_model)
+
         save_config(config)
 
         ok, result = process_model(model_name)
@@ -559,35 +640,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         config = load_config()
         index, existing = find_model(config, model_name)
+
+        base_model = {
+            "name": model_name,
+            "file": file_name,
+            "unit": "m",
+            "lon": float(body.get("lon", 0)),
+            "lat": float(body.get("lat", 0)),
+            "height": float(body.get("height", 0)),
+            "status": "pending",
+            "tileset_url": None,
+            "error": None,
+            "processed_at": None,
+            "processing_stage": "pending",
+            "processing_detail": None,
+        }
+
         if existing is None:
-            config["models"].append(
-                {
-                    "name": model_name,
-                    "file": file_name,
-                    "unit": "m",
-                    "lon": float(body.get("lon", 0)),
-                    "lat": float(body.get("lat", 0)),
-                    "height": float(body.get("height", 0)),
-                    "status": "pending",
-                    "tileset_url": None,
-                    "error": None,
-                    "processed_at": None,
-                }
-            )
+            config["models"].append(base_model)
         else:
-            config["models"][index].update(
-                {
-                    "file": file_name,
-                    "unit": "m",
-                    "lon": float(body.get("lon", 0)),
-                    "lat": float(body.get("lat", 0)),
-                    "height": float(body.get("height", 0)),
-                    "status": "pending",
-                    "tileset_url": None,
-                    "error": None,
-                    "processed_at": None,
-                }
-            )
+            config["models"][index].update(base_model)
+
         save_config(config)
 
         ok, result = process_model(model_name)
@@ -608,7 +681,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def status_page(self):
         config = load_config()
         models = config.get("models", [])
-        mesh_backend_ok = True
         tiles_tools_ok = os.path.isfile(TOOLS["tiles_tools_path"])
 
         rows = ""
@@ -619,21 +691,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "processing": "#4a9aba",
                 "error": "#e07a7a",
             }.get(model.get("status", "pending"), "#aac8e0")
+
             name_html = (
                 f'<a href="{model["tileset_url"]}">{model["name"]}</a>'
                 if model.get("tileset_url")
                 else model["name"]
             )
+
+            stage = model.get("processing_stage") or "—"
+            detail = model.get("processing_detail") or "—"
+
             rows += (
                 f"<tr><td>{name_html}</td>"
                 f"<td>{model['file']}</td>"
                 f"<td style='color:{color}'>{model.get('status', 'pending')}</td>"
+                f"<td>{stage}</td>"
+                f"<td>{detail}</td>"
                 f"<td>{model.get('processed_at') or '—'}</td>"
                 f"<td style='color:#e07a7a'>{model.get('error') or '—'}</td></tr>"
             )
 
         if not rows:
-            rows = "<tr><td colspan='5'>No models yet</td></tr>"
+            rows = "<tr><td colspan='7'>No models yet</td></tr>"
 
         html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -646,7 +725,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     h1 {{ color: white; }}
     table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
     th {{ background: #1a2a3a; color: #aac8e0; padding: 10px 14px; text-align: left; }}
-    td {{ padding: 10px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; }}
+    td {{ padding: 10px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; vertical-align: top; }}
     a {{ color: #4a9aba; text-decoration: none; }}
     .scene-box {{ background: #1a2a3a; border: 1px solid #2a3a4a; border-radius: 8px; padding: 16px; margin-bottom: 24px; }}
   </style>
@@ -660,12 +739,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
   <h2>Tools</h2>
   <table>
     <tr><th>Tool</th><th>Status</th></tr>
-    <tr><td>Mesh backend</td><td>trimesh + open3d</td></tr>
-    <tr><td>3d-tiles-tools</td><td>{'Found' if tiles_tools_ok else 'Not Found'}</td></tr>
+    <tr><td>Mesh backend</td><td>trimesh + open3d + pymeshlab fallback</td></tr>
+    <tr><td>3d-tiles-tools</td><td>{"Found" if tiles_tools_ok else "Not Found"}</td></tr>
   </table>
   <h2>Models ({len(models)})</h2>
   <table>
-    <thead><tr><th>Name</th><th>File</th><th>Status</th><th>Processed</th><th>Error</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>File</th>
+        <th>Status</th>
+        <th>Stage</th>
+        <th>Detail</th>
+        <th>Processed</th>
+        <th>Error</th>
+      </tr>
+    </thead>
     <tbody>{rows}</tbody>
   </table>
 </body>
@@ -678,7 +767,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_body(self):
-        length = int(self.headers.get("Content-Length", 0))
+        content_length = self.headers.get("Content-Length")
+        if content_length is None:
+            self._json(400, {"error": "Missing Content-Length header"})
+            return None
+        length = int(content_length)
+        if length == 0:
+            self._json(400, {"error": "Empty request body"})
+            return None
         raw = self.rfile.read(length)
         try:
             return json.loads(raw)
@@ -722,10 +818,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         if args and "favicon" not in str(args[0]):
-            print(f"[Server] {args[0]} {args[1]}")
+            print(f"[Server] {' '.join(str(a) for a in args)}")
 
 
-print(f"[Server] Mesh backend   : trimesh + open3d")
+print(f"[Server] Mesh backend   : trimesh + open3d + pymeshlab fallback")
 print(f"[Server] 3d-tiles-tools : {TOOLS['tiles_tools_path']}")
 print(f"[Server] gltf-transform : {TOOLS['gltf_transform_path']}")
 print(f"[Server] Config         : {CONFIG_PATH}")
@@ -738,7 +834,6 @@ print(f"  API      : http://localhost:{PORT}/api/models")
 print(f"  Scene    : http://localhost:{PORT}/scene/tileset.json")
 print("  Press Ctrl+C to stop")
 print("")
-
 
 threading.Thread(target=process_all_pending, daemon=True).start()
 

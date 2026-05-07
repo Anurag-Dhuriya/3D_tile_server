@@ -291,8 +291,18 @@
   </div>
 
   <script>
-    Cesium.Ion.defaultAccessToken = undefined;
+    Cesium.Ion.defaultAccessToken = '';  // explicitly opt out of Ion token (Bug 6)
     const BASE_URL = window.location.origin;
+
+    // Escape user-supplied strings before injecting into innerHTML (Bug 4)
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     const viewer = new Cesium.Viewer('viewer', {
       imageryProvider: new Cesium.TileMapServiceImageryProvider({
@@ -341,7 +351,7 @@
             if (minGeometricError >= 10000000) {
                 document.getElementById('stat-lod').textContent = 'Loading...';
             } else {
-                document.getElementById('stat-lod').textContent = `Error: ${minGeometricError.toFixed(2)}`;
+                document.getElementById('stat-lod').textContent = `Geo Error: ${minGeometricError.toFixed(2)}`;
             }
         } else {
             document.getElementById('stat-tiles').textContent = '0';
@@ -412,10 +422,25 @@
     function clearLoadedTilesets() {
       for (const [name, tileset] of Object.entries(loadedTilesets)) {
         try {
+          // Remove the tileVisible listener we attached to avoid stale accumulation (Bug 5)
+          if (tileset._tileVisibleListener) {
+            tileset.tileVisible.removeEventListener(tileset._tileVisibleListener);
+          }
           viewer.scene.primitives.remove(tileset);
         } catch (e) {}
         delete loadedTilesets[name];
       }
+    }
+
+    function attachTileVisibleListener(tileset) {
+      const listener = function(tile) {
+        visibleTilesCount++;
+        if (tile.geometricError < minGeometricError) {
+          minGeometricError = tile.geometricError;
+        }
+      };
+      tileset._tileVisibleListener = listener;
+      tileset.tileVisible.addEventListener(listener);
     }
 
     async function loadScene() {
@@ -438,22 +463,13 @@
           });
         } catch (e) {}
 
-        if (loadedTilesets['__scene__']) {
-          viewer.scene.primitives.remove(loadedTilesets['__scene__']);
-          delete loadedTilesets['__scene__'];
-        }
-
+        // clearLoadedTilesets() handles all tilesets including __scene__
         clearLoadedTilesets();
 
         const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
         
         // Attach listener for real-time LOD stat updates
-        tileset.tileVisible.addEventListener(function(tile) {
-            visibleTilesCount++;
-            if (tile.geometricError < minGeometricError) {
-                minGeometricError = tile.geometricError;
-            }
-        });
+        attachTileVisibleListener(tileset);
 
         viewer.scene.primitives.add(tileset);
         loadedTilesets['__scene__'] = tileset;
@@ -541,12 +557,7 @@
         const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl);
         
         // Attach listener for real-time LOD stat updates
-        tileset.tileVisible.addEventListener(function(tile) {
-            visibleTilesCount++;
-            if (tile.geometricError < minGeometricError) {
-                minGeometricError = tile.geometricError;
-            }
-        });
+        attachTileVisibleListener(tileset);
 
         viewer.scene.primitives.add(tileset);
         loadedTilesets[name] = tileset;
@@ -598,17 +609,13 @@
 
         if (loadedTilesets[name]) {
           viewer.scene.primitives.remove(loadedTilesets[name]);
+          delete loadedTilesets[name];
         }
 
         const tileset = await Cesium.Cesium3DTileset.fromUrl(tsUrl);
         
         // Attach listener for real-time LOD stat updates
-        tileset.tileVisible.addEventListener(function(tile) {
-            visibleTilesCount++;
-            if (tile.geometricError < minGeometricError) {
-                minGeometricError = tile.geometricError;
-            }
-        });
+        attachTileVisibleListener(tileset);
 
         viewer.scene.primitives.add(tileset);
         loadedTilesets[name] = tileset;
@@ -643,13 +650,13 @@
         }
 
         list.innerHTML = models.map(m => {
-          const statusClass = `status-${m.status || 'pending'}`;
+          const statusClass = `status-${escapeHtml(m.status || 'pending')}`;
           const clickable = m.status === 'ready' && m.tileset_url
-            ? `onclick="loadSingleModel('${m.name}', '${m.tileset_url}')"` : '';
+            ? `onclick="loadSingleModel('${escapeHtml(m.name)}', '${escapeHtml(m.tileset_url)}')"` : '';
           return `
             <div class="model-item" ${clickable}>
-              <span class="model-name">${m.name}</span>
-              <span class="model-status ${statusClass}">${m.status || 'pending'}</span>
+              <span class="model-name">${escapeHtml(m.name)}</span>
+              <span class="model-status ${statusClass}">${escapeHtml(m.status || 'pending')}</span>
             </div>`;
         }).join('');
 

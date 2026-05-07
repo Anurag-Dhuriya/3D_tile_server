@@ -1,8 +1,19 @@
 GML_NAMESPACE = "http://www.opengis.net/gml"
 
+GML_NAMESPACES = (
+    "http://www.opengis.net/gml",
+    "http://www.opengis.net/gml/3.2",
+)
+
 
 def local_name(tag):
     return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+def namespace_uri(tag):
+    if tag.startswith("{") and "}" in tag:
+        return tag[1:].split("}", 1)[0]
+    return ""
 
 
 def parse_poslist(text, srs_dimension=None):
@@ -46,7 +57,11 @@ def extract_building_polygons(building):
     polygons = []
 
     for polygon in building.iter():
+        # FIX: Check both local name AND namespace to avoid false matches
+        # from non-GML elements with a "Polygon" tag in another namespace.
         if local_name(polygon.tag) != "Polygon":
+            continue
+        if namespace_uri(polygon.tag) not in GML_NAMESPACES:
             continue
 
         exterior = polygon.find(f"./{{{GML_NAMESPACE}}}exterior")

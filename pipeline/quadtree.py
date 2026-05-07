@@ -25,6 +25,17 @@ class BBox2D:
         return (self.min_lat + self.max_lat) / 2.0
 
     def contains(self, lon, lat):
+        # Half-open interval [min, max) on both axes.
+        # This guarantees each point falls into exactly one child quadrant after
+        # subdivide(), eliminating boundary overlap (Bug 1).
+        # The root node uses contains_closed() to keep edge models inside the tree.
+        return (
+            self.min_lon <= lon < self.max_lon
+            and self.min_lat <= lat < self.max_lat
+        )
+
+    def contains_closed(self, lon, lat):
+        """Fully closed [min, max] check — used only for the root bounds."""
         return (
             self.min_lon <= lon <= self.max_lon
             and self.min_lat <= lat <= self.max_lat
@@ -40,7 +51,12 @@ class BBox2D:
             BBox2D(cx, self.min_lat, self.max_lon, cy),
         ]
 
-    def to_region(self, min_height=0.0, max_height=300.0):
+    def to_region(self, min_height=0.0, max_height=5000.0):
+        """
+        Returns a 3D Tiles region bounding volume.
+        max_height defaults to 5000m — pass the actual scene height where known
+        to avoid over- or under-culling.
+        """
         return {
             "region": [
                 math.radians(self.min_lon),
@@ -70,7 +86,10 @@ class QuadNode:
         lon = float(model["lon"])
         lat = float(model["lat"])
 
-        if not self.bounds.contains(lon, lat):
+        # Use closed bounds at root (depth 0) so edge models aren't rejected;
+        # child nodes use half-open bounds to avoid quadrant boundary overlaps.
+        check = self.bounds.contains_closed if self.depth == 0 else self.bounds.contains
+        if not check(lon, lat):
             return False
 
         if self.is_leaf:
@@ -83,6 +102,9 @@ class QuadNode:
             if child.insert(model):
                 return True
 
+        # Safety fallback: model fell through all children (should not happen after Bug 1 fix).
+        print(f"[Quadtree] WARNING: model '{model.get('name', '?')}' at ({lon},{lat}) "
+              f"not accepted by any child at depth {self.depth} — kept on parent node")
         self.models.append(model)
         return True
 
@@ -124,19 +146,30 @@ def build_quadtree(models, padding_deg=0.005, max_depth=4, max_per_cell=4):
     if not models:
         return None
 
-    lons = [float(model["lon"]) for model in models]
-    lats = [float(model["lat"]) for model in models]
+    lons = []
+    lats = []
+    for model in models:
+        if "lon" not in model or "lat" not in model:
+            raise ValueError(
+                f"Model '{model.get('name', '?')}' is missing 'lon' or 'lat' — "
+                f"cannot insert into quadtree"
+            )
+        lons.append(float(model["lon"]))
+        lats.append(float(model["lat"]))
 
-    span = max(max(lons) - min(lons), max(lats) - min(lats), 0.01)
     center_lon = (min(lons) + max(lons)) / 2.0
     center_lat = (min(lats) + max(lats)) / 2.0
-    half = span / 2.0 + padding_deg
+
+    # Use separate half-spans for lon and lat: they cover different physical
+    # distances, especially at high latitudes (Bug 3).
+    half_lon = max(max(lons) - min(lons), 0.01) / 2.0 + padding_deg
+    half_lat = max(max(lats) - min(lats), 0.01) / 2.0 + padding_deg
 
     root_bounds = BBox2D(
-        center_lon - half,
-        center_lat - half,
-        center_lon + half,
-        center_lat + half,
+        center_lon - half_lon,
+        center_lat - half_lat,
+        center_lon + half_lon,
+        center_lat + half_lat,
     )
     root = QuadNode(root_bounds, max_depth=max_depth, max_per_cell=max_per_cell)
 

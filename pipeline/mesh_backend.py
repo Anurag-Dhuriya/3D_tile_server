@@ -247,60 +247,6 @@ def normalize_mesh(source_path, output_glb, unit="m"):
         "meta": meta,
     }
 
-    print(f"[Mesh] Loading          : {source_path}")
-
-    scene = load_scene(source_path)
-    has_texture = scene_has_textures(scene)
-
-    print(f"[Mesh] Texture detected : {'yes' if has_texture else 'no'}")
-
-    scale = UNIT_SCALE.get(str(unit).lower(), 1.0)
-    print(f"[Mesh] Unit scale       : {unit} -> meters, factor {scale}")
-
-    raw_bounds = scene_bounds(scene)
-    min_z_after_scale = float(raw_bounds[0][2] * scale)
-
-    transform = np.eye(4)
-    transform[0, 0] = scale
-    transform[1, 1] = scale
-    transform[2, 2] = scale
-    transform[2, 3] = -min_z_after_scale
-
-    scene.apply_transform(transform)
-
-    analysis_mesh = scene_to_single_mesh_for_analysis(scene)
-    bbox = compute_bbox(analysis_mesh)
-    meta = analyze_mesh(analysis_mesh, source_path, bbox)
-    meta["has_texture"] = has_texture
-
-    export_scene_glb(scene, output_glb)
-
-    if has_texture and not glb_has_textures(output_glb):
-        raise RuntimeError(
-            "Texture was detected in source, but normalized GLB lost texture data"
-        )
-
-    bbox_path = output_glb.replace(".glb", "_bbox.txt")
-    meta_path = output_glb.replace(".glb", "_meta.json")
-
-    with open(bbox_path, "w", encoding="utf-8") as handle:
-        handle.write(f"{bbox['width']},{bbox['depth']},{bbox['height']}")
-
-    with open(meta_path, "w", encoding="utf-8") as handle:
-        json.dump(meta, handle, indent=2)
-
-    print(f"[Mesh] Width            : {bbox['width']:.3f}m")
-    print(f"[Mesh] Depth            : {bbox['depth']:.3f}m")
-    print(f"[Mesh] Height           : {bbox['height']:.3f}m")
-    print("[Mesh] Base Z           : 0.0000m")
-    print(f"[Mesh] Normalized GLB   : {output_glb}")
-
-    return {
-        "glb": output_glb,
-        "bbox": bbox,
-        "meta": meta,
-    }
-
 
 def compute_bbox(mesh):
     bounds = mesh.bounds

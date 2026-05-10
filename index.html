@@ -244,16 +244,40 @@
         <div id="scene-status" style="margin-top:8px;font-size:11px;font-family:sans-serif;color:#5dcaa5;display:none"></div>
       </div>
 
-      <div id="tab-models" class="tab-content">
+            <div id="tab-models" class="tab-content">
         <div id="model-list">
           <div style="color:#6a9ab0;font-size:11px;font-family:sans-serif;padding:8px 0">
             Loading models...
           </div>
         </div>
+
         <button class="btn" onclick="refreshModels()" style="margin-top:8px">
           Refresh
         </button>
+
+        <div class="lod-info" style="margin-top:10px;background:#0a1f2a;border-color:#1f4052;color:#7fb7cf">
+          Test the 3DCityDB connection and tiled CityGML export without running the full pipeline.
+        </div>
+
+        <label>3DCityDB model name (optional)</label>
+        <input
+          type="text"
+          id="citydb-model-name"
+          placeholder="Leave empty to use the first 3DCityDB-backed model"/>
+
+        <button class="btn btn-nav" onclick="testCityDb(false)">
+          Test CityDB
+        </button>
+
+        <button class="btn btn-nav" onclick="testCityDb(true)">
+          Test CityDB + Keep Tiles
+        </button>
+
+        <div
+          id="citydb-test-result"
+          style="display:none;margin-top:8px;padding:8px 10px;border-radius:5px;border:1px solid #2a3a4a;background:#0d1b2a;color:#aac8e0;font-size:11px;font-family:monospace;line-height:1.6;white-space:pre-wrap"></div>
       </div>
+
 
       <div id="tab-glb" class="tab-content">
         <label>GLB file URL</label>
@@ -636,9 +660,64 @@
         console.error(err);
       }
     }
+        function setCityDbResult(message, isError = false) {
+      const el = document.getElementById('citydb-test-result');
+      el.style.display = 'block';
+      el.style.color = isError ? '#e07a7a' : '#aac8e0';
+      el.style.borderColor = isError ? '#5a2a2a' : '#2a3a4a';
+      el.textContent = message;
+    }
 
-    async function refreshModels() {
+    async function testCityDb(keepOutput) {
+      const modelName = document.getElementById('citydb-model-name').value.trim();
+      const params = new URLSearchParams();
+
+      if (modelName) params.set('model', modelName);
+      if (keepOutput) params.set('keep', '1');
+
+      const url = `${BASE_URL}/api/citydb/test${params.toString() ? `?${params.toString()}` : ''}`;
+
+      setStatus('Testing 3DCityDB export...');
+      setCityDbResult('Running 3DCityDB smoke test...');
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        const lines = [
+          `ok: ${data.ok}`,
+          `model: ${data.model || '—'}`,
+          `citydb_tool: ${data.citydb_tool || '—'}`,
+          `database: ${data.database || '—'}`,
+          `schema: ${data.schema || '—'}`,
+          `tile_dimension_m: ${data.tile_dimension_m ?? '—'}`,
+          `exported_tile_count: ${data.exported_tile_count ?? 0}`,
+          `export_dir: ${data.export_dir || '(temporary output removed)'}`
+        ];
+
+        if (Array.isArray(data.sample_tiles) && data.sample_tiles.length > 0) {
+          lines.push('');
+          lines.push('sample_tiles:');
+          data.sample_tiles.forEach(tile => lines.push(`- ${tile}`));
+        }
+
+        setCityDbResult(lines.join('\n'));
+        setStatus('3DCityDB smoke test passed');
+      } catch (err) {
+        setCityDbResult(`error: ${err.message}`, true);
+        setStatus(`CityDB test failed: ${err.message}`, true);
+        console.error(err);
+      }
+    }
+
+        async function refreshModels() {
       const list = document.getElementById('model-list');
+      const citydbInput = document.getElementById('citydb-model-name');
+
       try {
         const res = await fetch(`${BASE_URL}/api/models`);
         const data = await res.json();
@@ -646,6 +725,7 @@
 
         if (models.length === 0) {
           list.innerHTML = '<div style="color:#6a9ab0;font-size:11px;font-family:sans-serif;padding:8px 0">No models configured</div>';
+          if (citydbInput) citydbInput.value = '';
           return;
         }
 
@@ -660,6 +740,17 @@
             </div>`;
         }).join('');
 
+        if (citydbInput && !citydbInput.value.trim()) {
+          const firstCityDbModel = models.find(m =>
+            m &&
+            m.pipeline &&
+            String(m.pipeline.input_backend || '').toLowerCase() === '3dcitydb'
+          );
+
+          if (firstCityDbModel) {
+            citydbInput.value = firstCityDbModel.name;
+          }
+        }
       } catch (err) {
         list.innerHTML = '<div style="color:#e07a7a;font-size:11px;font-family:sans-serif">Could not reach server</div>';
       }

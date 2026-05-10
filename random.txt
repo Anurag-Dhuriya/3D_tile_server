@@ -58,3 +58,13 @@ which 3d-tiles-tools
 3d-tiles-tools --version
 After both work, start your server:
 
+Then start fresh:
+
+source venv/bin/activate
+python3 server.py
+If needed, trigger only new_model:
+
+curl -X POST http://localhost:8080/api/models/new_model/process
+Check status:
+
+curl http://localhost:8080/api/models/new_model/status

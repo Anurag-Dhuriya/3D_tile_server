@@ -1,15 +1,14 @@
 # Python dependencies for the 3D Tile Server backend.
 #
 # External tools still required outside pip:
-# - Blender 5.x or compatible, used by blender_process.py
-# - Node.js 3d-tiles-tools CLI, install with: npm install -g 3d-tiles-tools
+# - 3d-tiles-tools CLI
+# - gltf-transform CLI
 
-pyproj==3.7.1
 numpy
 trimesh
 pymeshlab
 open3d
-pyproj
+pyproj==3.7.1
 lxml
 pillow
 scipy

@@ -5,6 +5,11 @@ import shutil
 import subprocess
 import time
 
+from .citydb_adapter import (
+    export_citydb_tiles,
+    import_city_model_to_db,
+    should_use_citydb_backend,
+)
 from .citygml import extract_citygml_buildings
 from .mesh_backend import normalize_mesh, generate_lod_glb
 from .settings import pipeline_settings_for_model
@@ -16,6 +21,9 @@ MIN_FACE_LIMIT = 100
 MIN_FACE_DROP_RATIO = 0.18
 MIN_ERROR_STEP_METERS = 0.15
 MAX_DYNAMIC_LEVELS = 6
+
+_M_PER_DEG_LON_EQ = 111319.49079327357
+_M_PER_DEG_LAT = 110574.0
 
 
 def emit_stage(stage_hook, stage, detail=None):
@@ -87,9 +95,9 @@ def read_meta_file(path):
 
 
 def glb_to_b3dm(tool_path, glb_path, b3dm_path):
-    _dir = os.path.dirname(b3dm_path)
-    if _dir:
-        os.makedirs(_dir, exist_ok=True)
+    output_dir = os.path.dirname(b3dm_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
     result = subprocess.run(
         [tool_path, "glbToB3dm", "-i", glb_path, "-o", b3dm_path, "-f"],
@@ -332,9 +340,9 @@ def generate_lod_glbs(source_glb, lod_dir, asset_name, tools, lod_plan, has_text
 def process_mesh_asset(asset_name, source_path, unit, paths, tools, model_name, output_dir, stage_hook=None):
     safe_asset_name = f"{model_name}__{asset_name}"
     normalized_glb = os.path.join(paths["models_dir"], f"{safe_asset_name}.glb")
-    _glb_stem = os.path.join(paths["models_dir"], safe_asset_name)
-    bbox_path = _glb_stem + "_bbox.txt"
-    meta_path = _glb_stem + "_meta.json"
+    glb_stem = os.path.join(paths["models_dir"], safe_asset_name)
+    bbox_path = glb_stem + "_bbox.txt"
+    meta_path = glb_stem + "_meta.json"
 
     print(f"[Pipeline] Normalizing {asset_name} from {os.path.basename(source_path)}")
     emit_stage(stage_hook, "normalizing_mesh", asset_name)
@@ -400,6 +408,236 @@ def process_mesh_asset(asset_name, source_path, unit, paths, tools, model_name, 
     }
 
 
+def _citygml_lod_payload():
+    return [
+        {
+            "name": "multi-building",
+            "ratio": 1.0,
+            "target_faces": 0,
+            "geometric_error": 0.0,
+        }
+    ]
+
+
+def extract_and_process_citygml_buildings(source_path, citygml_dir, name, paths, tools, output_dir, stage_hook=None):
+    emit_stage(stage_hook, "parsing_citygml", os.path.basename(source_path))
+    manifest = extract_citygml_buildings(source_path, citygml_dir)
+
+    building_entries = []
+
+    for building in manifest["buildings"]:
+        asset_name = building["name"]
+        asset_source = os.path.join(citygml_dir, building["file"])
+
+        try:
+            emit_stage(stage_hook, "processing_citygml_building", asset_name)
+            asset_result = process_mesh_asset(
+                asset_name=asset_name,
+                source_path=asset_source,
+                unit="m",
+                paths=paths,
+                tools=tools,
+                model_name=name,
+                output_dir=output_dir,
+                stage_hook=stage_hook,
+            )
+
+            if not asset_result.get("b3dm_map"):
+                print(f"[CityGML] Skipping {asset_name}: no b3dm output")
+                continue
+
+            building_entries.append({
+                "name": asset_name,
+                "bbox": asset_result["bbox"],
+                "lod_plan": asset_result["lod_plan"],
+                "b3dm_map": asset_result["b3dm_map"],
+                "offset_x": building["offset_x"],
+                "offset_y": building["offset_y"],
+                "offset_z": building["offset_z"],
+                "analysis": asset_result["analysis"],
+            })
+
+        except Exception as exc:
+            print(f"[CityGML] Skipping building {asset_name}: {exc}")
+            continue
+
+    if not building_entries:
+        raise RuntimeError(f"CityGML processing produced no valid buildings for source '{source_path}'")
+
+    return manifest, building_entries
+
+
+def _approx_dataset_bbox_from_tiles(tile_models):
+    min_lon = float("inf")
+    max_lon = float("-inf")
+    min_lat = float("inf")
+    max_lat = float("-inf")
+    min_height = float("inf")
+    max_height = float("-inf")
+
+    for model in tile_models:
+        bbox = model.get("_bbox") or {}
+        width = float(bbox.get("width", 1.0))
+        depth = float(bbox.get("depth", 1.0))
+        height = float(bbox.get("height", 1.0))
+        lon = float(model["lon"])
+        lat = float(model["lat"])
+        base_height = float(model.get("height", 0.0))
+
+        lon_delta = (width / 2.0) / (_M_PER_DEG_LON_EQ * max(1e-9, math.cos(math.radians(lat))))
+        lat_delta = (depth / 2.0) / _M_PER_DEG_LAT
+
+        min_lon = min(min_lon, lon - lon_delta)
+        max_lon = max(max_lon, lon + lon_delta)
+        min_lat = min(min_lat, lat - lat_delta)
+        max_lat = max(max_lat, lat + lat_delta)
+        min_height = min(min_height, base_height)
+        max_height = max(max_height, base_height + height)
+
+    center_lat = (min_lat + max_lat) / 2.0 if min_lat != float("inf") else 0.0
+
+    width_m = abs(max_lon - min_lon) * _M_PER_DEG_LON_EQ * max(1e-9, math.cos(math.radians(center_lat)))
+    depth_m = abs(max_lat - min_lat) * _M_PER_DEG_LAT
+    height_m = max(max_height - min_height, 1.0)
+
+    return {
+        "width": max(width_m, 1.0),
+        "depth": max(depth_m, 1.0),
+        "height": max(height_m, 1.0),
+    }
+
+
+def process_citydb_backed_citygml(model, source_path, paths, tools, output_dir, stage_hook=None):
+    name = model["name"]
+    settings = pipeline_settings_for_model(model)
+
+    citydb_export_dir = os.path.join(paths["models_dir"], f"{name}_citydb_export")
+    tile_tiles_root = os.path.join(output_dir, "_citydb_tiles")
+
+    shutil.rmtree(citydb_export_dir, ignore_errors=True)
+    shutil.rmtree(tile_tiles_root, ignore_errors=True)
+
+    import_start = time.perf_counter()
+    import_city_model_to_db(source_path, name, settings, stage_hook=stage_hook)
+    import_sec = time.perf_counter() - import_start
+
+    export_start = time.perf_counter()
+    exported_tiles = export_citydb_tiles(name, citydb_export_dir, settings, stage_hook=stage_hook)
+    export_sec = time.perf_counter() - export_start
+
+    ready_tile_models = []
+    total_buildings = 0
+    tile_process_start = time.perf_counter()
+
+    for tile_index, tile_source in enumerate(exported_tiles):
+        tile_name = f"tile_{tile_index:04d}"
+        tile_citygml_dir = os.path.join(paths["models_dir"], f"{name}_{tile_name}_citygml")
+        tile_output_dir = os.path.join(tile_tiles_root, tile_name)
+
+        shutil.rmtree(tile_citygml_dir, ignore_errors=True)
+        shutil.rmtree(tile_output_dir, ignore_errors=True)
+
+        emit_stage(stage_hook, "processing_citydb_tile", tile_name)
+
+        manifest, building_entries = extract_and_process_citygml_buildings(
+            source_path=tile_source,
+            citygml_dir=tile_citygml_dir,
+            name=f"{name}_{tile_name}",
+            paths=paths,
+            tools=tools,
+            output_dir=tile_output_dir,
+            stage_hook=stage_hook,
+        )
+
+        lod_plan_payload = _citygml_lod_payload()
+
+        tileset_path = build_model_tileset(
+            output_folder=tile_output_dir,
+            bbox=manifest["bbox"],
+            lon=manifest["origin_lon"],
+            lat=manifest["origin_lat"],
+            height=manifest["origin_height"],
+            chunks=building_entries,
+        )
+        if not tileset_path:
+            raise RuntimeError(f"Failed to build tileset for exported DB tile '{tile_name}'")
+
+        analysis_payload = {
+            "source_type": "citydb_citygml_tile",
+            "building_count": len(building_entries),
+            "origin_lon": manifest["origin_lon"],
+            "origin_lat": manifest["origin_lat"],
+        }
+
+        write_bbox_json(
+            tile_output_dir,
+            manifest["bbox"],
+            lod_plan=lod_plan_payload,
+            analysis=analysis_payload,
+        )
+
+        ready_tile_models.append({
+            "name": tile_name,
+            "lon": manifest["origin_lon"],
+            "lat": manifest["origin_lat"],
+            "height": manifest["origin_height"],
+            "_bbox": manifest["bbox"],
+            "_lod_plan": lod_plan_payload,
+        })
+
+        total_buildings += len(building_entries)
+
+    tile_process_sec = time.perf_counter() - tile_process_start
+
+    if not ready_tile_models:
+        raise RuntimeError("3DCityDB export produced tiles, but none were successfully processed")
+
+    emit_stage(stage_hook, "building_tileset", f"{len(ready_tile_models)} 3DCityDB tiles")
+    dataset_tileset_start = time.perf_counter()
+
+    tileset_path = build_scene_tileset(
+        scene_dir=output_dir,
+        tiles_dir=tile_tiles_root,
+        ready_models=ready_tile_models,
+    )
+    if not tileset_path:
+        raise RuntimeError("Failed to build aggregated tileset for 3DCityDB export tiles")
+
+    tileset_sec = time.perf_counter() - dataset_tileset_start
+    bbox = _approx_dataset_bbox_from_tiles(ready_tile_models)
+
+    analysis_payload = {
+        "source_type": "3dcitydb",
+        "export_tile_count": len(ready_tile_models),
+        "building_count": total_buildings,
+        "tile_dimension_m": float(settings.get("citydb_tile_dimension_m", 500.0)),
+    }
+
+    lod_plan_payload = [
+        {
+            "name": "citydb-tiles",
+            "ratio": 1.0,
+            "target_faces": 0,
+            "geometric_error": max(bbox["width"], bbox["depth"]) * 0.5,
+        }
+    ]
+
+    return {
+        "bbox": bbox,
+        "tileset_path": tileset_path,
+        "analysis": analysis_payload,
+        "lod_plan": lod_plan_payload,
+        "timings": {
+            "normalize_sec": round(import_sec + export_sec, 2),
+            "lod_plan_sec": 0.0,
+            "lod_generation_sec": round(tile_process_sec, 2),
+            "b3dm_conversion_sec": 0.0,
+            "tileset_build_sec": round(tileset_sec, 2),
+            "total_pipeline_sec": round(import_sec + export_sec + tile_process_sec + tileset_sec, 2),
+        },
+    }
+
+
 def process_spatially_chunked_mesh(model, source_path, paths, tools, output_dir, stage_hook=None):
     model_name = model["name"]
     unit = model.get("unit", "m")
@@ -414,9 +652,9 @@ def process_spatially_chunked_mesh(model, source_path, paths, tools, output_dir,
     max_chunks = int(settings["max_chunks"])
 
     normalized_glb = os.path.join(paths["models_dir"], f"{model_name}__source.glb")
-    _glb_stem = os.path.join(paths["models_dir"], f"{model_name}__source")
-    bbox_path = _glb_stem + "_bbox.txt"
-    meta_path = _glb_stem + "_meta.json"
+    glb_stem = os.path.join(paths["models_dir"], f"{model_name}__source")
+    bbox_path = glb_stem + "_bbox.txt"
+    meta_path = glb_stem + "_meta.json"
 
     print(f"[Pipeline] Normalizing full source for chunking: {model_name}")
     emit_stage(stage_hook, "normalizing_source", model_name)
@@ -432,9 +670,9 @@ def process_spatially_chunked_mesh(model, source_path, paths, tools, output_dir,
 
     if not should_spatially_chunk(meta, bbox, chunk_mode):
         print("[Chunking] Model is small enough; using normal single-model pipeline")
-        for _p in (bbox_path, meta_path, normalized_glb):
-            if os.path.isfile(_p):
-                os.remove(_p)
+        for path in (bbox_path, meta_path, normalized_glb):
+            if os.path.isfile(path):
+                os.remove(path)
         return None
 
     chunk_source_dir = os.path.join(paths["models_dir"], f"{model_name}_chunks")
@@ -448,9 +686,9 @@ def process_spatially_chunked_mesh(model, source_path, paths, tools, output_dir,
         max_chunks=max_chunks,
     )
 
-    for _p in (bbox_path, meta_path, normalized_glb):
-        if os.path.isfile(_p):
-            os.remove(_p)
+    for path in (bbox_path, meta_path, normalized_glb):
+        if os.path.isfile(path):
+            os.remove(path)
 
     building_entries = []
 
@@ -556,7 +794,7 @@ def build_model_artifacts(model, paths, tools, stage_hook=None):
         raise FileNotFoundError(f"Source file not found: {file_name}")
 
     ext = os.path.splitext(source_path)[1].lower()
-    if ext not in {".obj", ".glb", ".gltf", ".gml", ".xml"}:
+    if ext not in {".obj", ".glb", ".gltf", ".gml", ".xml", ".cityjson", ".json"}:
         raise ValueError(f"Unsupported format: {ext}")
 
     output_dir = os.path.join(paths["tiles_dir"], name)
@@ -565,84 +803,53 @@ def build_model_artifacts(model, paths, tools, stage_hook=None):
     shutil.rmtree(output_dir, ignore_errors=True)
     shutil.rmtree(citygml_dir, ignore_errors=True)
 
+    settings = pipeline_settings_for_model(model)
+
+    if ext in {".gml", ".xml"} and should_use_citydb_backend(model, source_path=source_path, settings=settings):
+        return process_citydb_backed_citygml(
+            model=model,
+            source_path=source_path,
+            paths=paths,
+            tools=tools,
+            output_dir=output_dir,
+            stage_hook=stage_hook,
+        )
+
     if ext in {".gml", ".xml"}:
-        emit_stage(stage_hook, "parsing_citygml", name)
         parse_start = time.perf_counter()
         print(f"[Pipeline] Parsing CityGML for {name} from {os.path.basename(source_path)}")
-        city_manifest = extract_citygml_buildings(source_path, citygml_dir)
+
+        manifest, building_entries = extract_and_process_citygml_buildings(
+            source_path=source_path,
+            citygml_dir=citygml_dir,
+            name=name,
+            paths=paths,
+            tools=tools,
+            output_dir=output_dir,
+            stage_hook=stage_hook,
+        )
         parse_sec = time.perf_counter() - parse_start
-
-        building_entries = []
-        building_start = time.perf_counter()
-
-        for building in city_manifest["buildings"]:
-            asset_name = building["name"]
-            asset_source = os.path.join(citygml_dir, building["file"])
-
-            try:
-                emit_stage(stage_hook, "processing_citygml_building", asset_name)
-                asset_result = process_mesh_asset(
-                    asset_name=asset_name,
-                    source_path=asset_source,
-                    unit="m",
-                    paths=paths,
-                    tools=tools,
-                    model_name=name,
-                    output_dir=output_dir,
-                    stage_hook=stage_hook,
-                )
-
-                if not asset_result.get("b3dm_map"):
-                    print(f"[CityGML] Skipping {asset_name}: no b3dm output")
-                    continue
-
-                building_entries.append({
-                    "name": asset_name,
-                    "bbox": asset_result["bbox"],
-                    "lod_plan": asset_result["lod_plan"],
-                    "b3dm_map": asset_result["b3dm_map"],
-                    "offset_x": building["offset_x"],
-                    "offset_y": building["offset_y"],
-                    "offset_z": building["offset_z"],
-                    "analysis": asset_result["analysis"],
-                })
-
-            except Exception as exc:
-                print(f"[CityGML] Skipping building {asset_name}: {exc}")
-                continue
-
-        lod_sec = time.perf_counter() - building_start
-
-        if not building_entries:
-            raise RuntimeError(f"CityGML processing produced no valid buildings for model '{name}'")
 
         emit_stage(stage_hook, "building_tileset", f"{len(building_entries)} CityGML buildings")
         tileset_start = time.perf_counter()
         tileset_path = build_model_tileset(
             output_folder=output_dir,
-            bbox=city_manifest["bbox"],
-            lon=city_manifest["origin_lon"],
-            lat=city_manifest["origin_lat"],
-            height=city_manifest["origin_height"],
+            bbox=manifest["bbox"],
+            lon=manifest["origin_lon"],
+            lat=manifest["origin_lat"],
+            height=manifest["origin_height"],
             chunks=building_entries,
         )
         tileset_sec = time.perf_counter() - tileset_start
 
-        bbox = city_manifest["bbox"]
+        bbox = manifest["bbox"]
         analysis_payload = {
             "source_type": "citygml",
             "building_count": len(building_entries),
-            "origin_lon": city_manifest["origin_lon"],
-            "origin_lat": city_manifest["origin_lat"],
+            "origin_lon": manifest["origin_lon"],
+            "origin_lat": manifest["origin_lat"],
         }
-        lod_plan_payload = [
-            {
-                "name": "multi-building",
-                "ratio": 1.0,
-                "target_faces": 0,
-                "geometric_error": 0.0,
-            }
-        ]
+        lod_plan_payload = _citygml_lod_payload()
 
         return {
             "bbox": bbox,
@@ -652,7 +859,7 @@ def build_model_artifacts(model, paths, tools, stage_hook=None):
             "timings": {
                 "normalize_sec": round(parse_sec, 2),
                 "lod_plan_sec": 0.0,
-                "lod_generation_sec": round(lod_sec, 2),
+                "lod_generation_sec": 0.0,
                 "b3dm_conversion_sec": 0.0,
                 "tileset_build_sec": round(tileset_sec, 2),
                 "total_pipeline_sec": round(time.perf_counter() - overall_start, 2),

@@ -1,23 +1,34 @@
 {
-  "port": 8080,
-  "host": "0.0.0.0",
-  "models": [
-    {
-      "name": "new_model",
-      "file": "new_model.obj",
-      "unit": "cm",
-      "lon": 72.5714,
-      "lat": 23.0225,
-      "height": 0,
-      "spatial_chunking": false,
-      "status": "ready",
-      "tileset_url": "http://localhost:8080/tiles/new_model/tileset.json",
-      "error": null,
-      "processed_at": "2026-05-06 18:17:30",
-      "processing_stage": "ready",
-      "processing_detail": "Processing complete",
-      "processing_started_at": 1778071049.8442729,
-      "processing_duration_sec": 600.85
-    }
-  ]
+  "name": "ahmedabad_city",
+  "file": "ahmedabad.gml",
+  "unit": "m",
+  "lon": 72.5714,
+  "lat": 23.0225,
+  "height": 0,
+  "status": "pending",
+  "tileset_url": null,
+  "error": null,
+  "processed_at": null,
+  "processing_stage": "pending",
+  "processing_detail": null,
+  "pipeline": {
+    "input_backend": "3dcitydb",
+    "citydb_tool_path": "/absolute/path/to/citydb",
+    "citydb_config_file": "/Users/anuragdhuriya/Desktop/3D_tile_server/citydb-config.json",
+    "citydb_db_name": "citydb",
+    "citydb_db_schema": "ahmedabad_city",
+    "citydb_db_username": "postgres",
+    "citydb_db_password": "postgres",
+    "citydb_db_host": "localhost",
+    "citydb_db_port": 5432,
+    "citydb_threads": 4,
+    "citydb_index_mode": "drop_create",
+    "citydb_compute_extent": true,
+    "citydb_import_mode": "import_all",
+    "citydb_export_format": "citygml",
+    "citydb_citygml_version": "3.0",
+    "citydb_tile_dimension_m": 500.0,
+    "citydb_tile_origin": "top_left",
+    "citydb_max_export_tiles": 256
+  }
 }

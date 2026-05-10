@@ -4,11 +4,60 @@ from .building_finder import find_buildings
 from .crs_transform import build_transformers, transform_ring
 from .exporter import export_obj, sanitize_building_id, write_manifest
 from .geometry_extractor import choose_reference_point, extract_building_polygons
-from .mesh_builder import bbox_from_points, build_local_mesh
+from .mesh_builder import build_local_mesh
 from .reader import guess_srs_name, read_citygml
 
 
 GML_NAMESPACE = "http://www.opengis.net/gml"
+
+
+def _merge_global_bounds(bounds_acc, mesh_data):
+    bbox = mesh_data["bbox"]
+    offset_x = float(mesh_data["offset_x"])
+    offset_y = float(mesh_data["offset_y"])
+    offset_z = float(mesh_data["offset_z"])
+
+    min_x = offset_x + float(bbox["min_x"]) - offset_x
+    max_x = offset_x + float(bbox["max_x"]) - offset_x
+    min_y = offset_y + float(bbox["min_y"]) - offset_y
+    max_y = offset_y + float(bbox["max_y"]) - offset_y
+    min_z = offset_z
+    max_z = offset_z + float(bbox["height"])
+
+    if bounds_acc is None:
+        return {
+            "min_x": min_x,
+            "max_x": max_x,
+            "min_y": min_y,
+            "max_y": max_y,
+            "min_z": min_z,
+            "max_z": max_z,
+        }
+
+    bounds_acc["min_x"] = min(bounds_acc["min_x"], min_x)
+    bounds_acc["max_x"] = max(bounds_acc["max_x"], max_x)
+    bounds_acc["min_y"] = min(bounds_acc["min_y"], min_y)
+    bounds_acc["max_y"] = max(bounds_acc["max_y"], max_y)
+    bounds_acc["min_z"] = min(bounds_acc["min_z"], min_z)
+    bounds_acc["max_z"] = max(bounds_acc["max_z"], max_z)
+    return bounds_acc
+
+
+def _finalize_bounds(bounds_acc):
+    if bounds_acc is None:
+        raise RuntimeError("No valid building geometry found in CityGML file")
+
+    return {
+        "min_x": bounds_acc["min_x"],
+        "max_x": bounds_acc["max_x"],
+        "min_y": bounds_acc["min_y"],
+        "max_y": bounds_acc["max_y"],
+        "min_z": bounds_acc["min_z"],
+        "max_z": bounds_acc["max_z"],
+        "width": bounds_acc["max_x"] - bounds_acc["min_x"],
+        "depth": bounds_acc["max_y"] - bounds_acc["min_y"],
+        "height": bounds_acc["max_z"] - bounds_acc["min_z"],
+    }
 
 
 def extract_citygml_buildings(gml_path, output_dir):
@@ -29,7 +78,7 @@ def extract_citygml_buildings(gml_path, output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     building_records = []
-    all_points = []
+    global_bounds = None
 
     for index, building in enumerate(buildings):
         polygons = extract_building_polygons(building)
@@ -59,26 +108,26 @@ def extract_citygml_buildings(gml_path, output_dir):
         building_records.append({
             "name": os.path.splitext(file_name)[0],
             "file": file_name,
-            "offset_x": round(mesh_data["offset_x"], 4),
-            "offset_y": round(mesh_data["offset_y"], 4),
-            "offset_z": round(mesh_data["offset_z"], 4),
+            "offset_x": round(float(mesh_data["offset_x"]), 4),
+            "offset_y": round(float(mesh_data["offset_y"]), 4),
+            "offset_z": round(float(mesh_data["offset_z"]), 4),
             "bbox": {
-                "width": round(mesh_data["bbox"]["width"], 4),
-                "depth": round(mesh_data["bbox"]["depth"], 4),
-                "height": round(mesh_data["bbox"]["height"], 4),
+                "width": round(float(mesh_data["bbox"]["width"]), 4),
+                "depth": round(float(mesh_data["bbox"]["depth"]), 4),
+                "height": round(float(mesh_data["bbox"]["height"]), 4),
             },
         })
 
-        all_points.extend(mesh_data["points"])
+        global_bounds = _merge_global_bounds(global_bounds, mesh_data)
 
     if not building_records:
         raise RuntimeError("No valid building meshes could be extracted from CityGML")
 
-    overall = bbox_from_points(all_points)
+    overall = _finalize_bounds(global_bounds)
     root_height = overall["min_z"]
 
     for record in building_records:
-        record["offset_z"] = round(record["offset_z"] - root_height, 4)
+        record["offset_z"] = round(float(record["offset_z"]) - root_height, 4)
 
     manifest = {
         "srs_name": srs_name,
@@ -86,9 +135,9 @@ def extract_citygml_buildings(gml_path, output_dir):
         "origin_lat": transformers["origin_lat"],
         "origin_height": round(root_height, 4),
         "bbox": {
-            "width": round(overall["width"], 4),
-            "depth": round(overall["depth"], 4),
-            "height": round(overall["height"], 4),
+            "width": round(float(overall["width"]), 4),
+            "depth": round(float(overall["depth"]), 4),
+            "height": round(float(overall["height"]), 4),
         },
         "buildings": building_records,
     }

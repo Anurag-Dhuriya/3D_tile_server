@@ -1,13 +1,19 @@
+import glob
 import http.server
 import json
 import os
 import shutil
+import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime
 
+from pipeline.citydb_adapter import ensure_citydb_available, export_citydb_tiles
 from pipeline.processing import build_model_artifacts, rebuild_scene, write_bbox_json
+from pipeline.settings import pipeline_settings_for_model
 
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
@@ -122,6 +128,147 @@ def tool_status_errors():
         print("[Server] GLB optimization will be skipped, but processing can continue.")
 
     return errors
+
+
+def remove_model_artifacts(model):
+    name = model["name"]
+
+    shutil.rmtree(os.path.join(PATHS["tiles_dir"], name), ignore_errors=True)
+    shutil.rmtree(os.path.join(PATHS["lod_dir"], name), ignore_errors=True)
+
+    generated_patterns = [
+        os.path.join(PATHS["models_dir"], f"{name}__*"),
+        os.path.join(PATHS["models_dir"], f"{name}_chunks"),
+        os.path.join(PATHS["models_dir"], f"{name}_chunks*"),
+        os.path.join(PATHS["models_dir"], f"{name}_citygml"),
+        os.path.join(PATHS["models_dir"], f"{name}_citygml*"),
+        os.path.join(PATHS["models_dir"], f"{name}_citydb_export"),
+        os.path.join(PATHS["models_dir"], f"{name}_citydb_export*"),
+        os.path.join(PATHS["tiles_dir"], name, "_citydb_tiles"),
+    ]
+
+    for pattern in generated_patterns:
+        for path in glob.glob(pattern):
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+
+    source_file = os.path.basename(model.get("file", ""))
+    if source_file:
+        source_path = os.path.join(PATHS["models_dir"], source_file)
+        source_ext = os.path.splitext(source_path)[1].lower()
+        if os.path.isfile(source_path) and source_ext in {".glb", ".gltf"}:
+            try:
+                os.remove(source_path)
+            except FileNotFoundError:
+                pass
+
+
+def download_remote_model(glb_url):
+    parsed = urllib.parse.urlparse(glb_url)
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Only http:// and https:// URLs are supported")
+
+    file_name = os.path.basename(urllib.parse.unquote(parsed.path))
+    if not file_name:
+        raise ValueError("The GLB URL must include a filename")
+
+    ext = os.path.splitext(file_name)[1].lower()
+    if ext not in {".glb", ".gltf"}:
+        raise ValueError("Only .glb and .gltf URLs are supported")
+
+    destination = os.path.join(PATHS["models_dir"], file_name)
+    temp_destination = destination + ".download"
+
+    request = urllib.request.Request(
+        glb_url,
+        headers={"User-Agent": "3D-Tile-Server/1.0"},
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            with open(temp_destination, "wb") as handle:
+                shutil.copyfileobj(response, handle)
+    except urllib.error.URLError as exc:
+        if os.path.isfile(temp_destination):
+            os.remove(temp_destination)
+        raise RuntimeError(f"Could not download GLB URL: {exc}") from exc
+    except Exception:
+        if os.path.isfile(temp_destination):
+            os.remove(temp_destination)
+        raise
+
+    if not os.path.isfile(temp_destination) or os.path.getsize(temp_destination) == 0:
+        if os.path.isfile(temp_destination):
+            os.remove(temp_destination)
+        raise RuntimeError("Downloaded GLB file is empty")
+
+    os.replace(temp_destination, destination)
+    return file_name, destination
+
+
+def find_citydb_test_model(config, requested_name=None):
+    if requested_name:
+        _, model = find_model(config, requested_name)
+        return model
+
+    for model in config.get("models", []):
+        settings = pipeline_settings_for_model(model)
+        if str(settings.get("input_backend", "direct")).lower() == "3dcitydb":
+            return model
+
+    return None
+
+
+def smoke_test_citydb_export(model, keep_output=False):
+    settings = pipeline_settings_for_model(model)
+    if str(settings.get("input_backend", "direct")).lower() != "3dcitydb":
+        raise RuntimeError(
+            f"Model '{model['name']}' is not configured for the 3DCityDB backend"
+        )
+
+    tool_path = ensure_citydb_available(settings)
+
+    export_dir = tempfile.mkdtemp(
+        prefix=f"{model['name']}_citydb_test_",
+        dir=PATHS["models_dir"],
+    )
+
+    try:
+        exported_tiles = export_citydb_tiles(
+            model["name"],
+            export_dir,
+            settings,
+            stage_hook=None,
+        )
+
+        payload = {
+            "ok": True,
+            "model": model["name"],
+            "citydb_tool": tool_path,
+            "database": settings.get("citydb_db_name"),
+            "schema": settings.get("citydb_db_schema"),
+            "tile_dimension_m": float(settings.get("citydb_tile_dimension_m", 500.0)),
+            "exported_tile_count": len(exported_tiles),
+            "sample_tiles": [
+                os.path.relpath(path, DIRECTORY) for path in exported_tiles[:5]
+            ],
+        }
+
+        if keep_output:
+            payload["export_dir"] = export_dir
+        else:
+            payload["export_dir"] = None
+
+        return payload
+    finally:
+        if not keep_output:
+            shutil.rmtree(export_dir, ignore_errors=True)
 
 
 def process_model(name):
@@ -328,65 +475,80 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/favicon.ico":
+        parsed = urllib.parse.urlparse(self.path)
+        route = parsed.path
+
+        if route == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
             return
-        if self.path == "/api/models":
+        if route == "/api/models":
             self.api_list_models()
             return
-        if self.path.startswith("/api/models/") and self.path.endswith("/status"):
-            raw_name = self.path[len("/api/models/"):-len("/status")]
+        if route == "/api/citydb/test":
+            self.api_citydb_test(parsed)
+            return
+        if route.startswith("/api/models/") and route.endswith("/status"):
+            raw_name = route[len("/api/models/"):-len("/status")]
             name = os.path.basename(raw_name)
             self.api_model_status(name)
             return
-        if self.path == "/tilesets":
+        if route == "/tilesets":
             self.api_tilesets()
             return
-        if self.path.startswith("/tileset/"):
-            name = os.path.basename(self.path.replace("/tileset/", "").strip("/"))
+        if route.startswith("/tileset/"):
+            name = os.path.basename(route.replace("/tileset/", "").strip("/"))
             self.legacy_get_tileset(name)
             return
-        if self.path == "/status":
+        if route == "/status":
             self.status_page()
             return
         super().do_GET()
 
     def do_POST(self):
-        if self.path == "/api/models":
+        parsed = urllib.parse.urlparse(self.path)
+        route = parsed.path
+
+        if route == "/api/models":
             self.api_add_model()
             return
-        if self.path.startswith("/api/models/") and self.path.endswith("/process"):
-            raw_name = self.path[len("/api/models/"):-len("/process")]
+        if route.startswith("/api/models/") and route.endswith("/process"):
+            raw_name = route[len("/api/models/"):-len("/process")]
             name = os.path.basename(raw_name)
             self.api_process_model(name)
             return
-        if self.path == "/api/process/all":
+        if route == "/api/process/all":
             self.api_process_all()
             return
-        if self.path == "/api/rebuild/scene":
+        if route == "/api/rebuild/scene":
             self.api_rebuild_scene()
             return
-        if self.path == "/upload":
+        if route == "/upload":
             self.legacy_upload()
             return
-        if self.path == "/convert":
+        if route == "/convert":
             self.legacy_convert()
             return
         self.send_response(404)
         self.end_headers()
 
     def do_PUT(self):
-        if self.path.startswith("/api/models/"):
-            name = os.path.basename(self.path.replace("/api/models/", "").strip("/"))
+        parsed = urllib.parse.urlparse(self.path)
+        route = parsed.path
+
+        if route.startswith("/api/models/"):
+            name = os.path.basename(route.replace("/api/models/", "").strip("/"))
             self.api_update_model(name)
             return
         self.send_response(404)
         self.end_headers()
 
     def do_DELETE(self):
-        if self.path.startswith("/api/models/"):
-            name = os.path.basename(self.path.replace("/api/models/", "").strip("/"))
+        parsed = urllib.parse.urlparse(self.path)
+        route = parsed.path
+
+        if route.startswith("/api/models/"):
+            name = os.path.basename(route.replace("/api/models/", "").strip("/"))
             self.api_delete_model(name)
             return
         self.send_response(404)
@@ -486,13 +648,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(404, {"error": f"Model not found: {name}"})
             return
 
-        shutil.rmtree(os.path.join(PATHS["tiles_dir"], name), ignore_errors=True)
-        shutil.rmtree(os.path.join(PATHS["lod_dir"], name), ignore_errors=True)
-
-        glb_path = os.path.join(PATHS["models_dir"], f"{name}.glb")
-        if os.path.isfile(glb_path):
-            os.remove(glb_path)
-
+        remove_model_artifacts(model)
         config["models"].pop(index)
         save_config(config)
 
@@ -544,6 +700,43 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "tileset_url": f"http://localhost:{PORT}/scene/tileset.json",
             },
         )
+
+    def api_citydb_test(self, parsed):
+        query = urllib.parse.parse_qs(parsed.query)
+        model_name = query.get("model", [None])[0]
+        keep_output = query.get("keep", ["0"])[0].lower() in {"1", "true", "yes"}
+
+        config = load_config()
+        model = find_citydb_test_model(config, requested_name=model_name)
+
+        if model is None:
+            if model_name:
+                self._json(404, {"ok": False, "error": f"Model not found: {model_name}"})
+            else:
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "No model configured with pipeline.input_backend='3dcitydb'",
+                    },
+                )
+            return
+
+        try:
+            payload = smoke_test_citydb_export(model, keep_output=keep_output)
+            self._json(200, payload)
+        except Exception as exc:
+            settings = pipeline_settings_for_model(model)
+            self._json(
+                500,
+                {
+                    "ok": False,
+                    "model": model["name"],
+                    "database": settings.get("citydb_db_name"),
+                    "schema": settings.get("citydb_db_schema"),
+                    "error": str(exc),
+                },
+            )
 
     def legacy_get_tileset(self, model_name):
         tileset_path = os.path.join(PATHS["tiles_dir"], model_name, "tileset.json")
@@ -629,14 +822,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(400, {"error": "Valid GLB URL required"})
             return
 
-        model_name = os.path.splitext(
-            os.path.basename(urllib.parse.urlparse(glb_url).path)
-        )[0]
-        file_name = f"{model_name}.glb"
-        local_path = os.path.join(PATHS["models_dir"], file_name)
-        if not os.path.isfile(local_path):
-            self._json(404, {"error": f"File not found: {file_name}"})
+        try:
+            file_name, _ = download_remote_model(glb_url)
+        except Exception as exc:
+            self._json(400, {"error": str(exc)})
             return
+
+        model_name = os.path.splitext(file_name)[0]
 
         config = load_config()
         index, existing = find_model(config, model_name)
@@ -659,6 +851,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if existing is None:
             config["models"].append(base_model)
         else:
+            remove_model_artifacts(existing)
             config["models"][index].update(base_model)
 
         save_config(config)
@@ -821,7 +1014,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             print(f"[Server] {' '.join(str(a) for a in args)}")
 
 
-print(f"[Server] Mesh backend   : trimesh + open3d + pymeshlab fallback")
+print("[Server] Mesh backend   : trimesh + open3d + pymeshlab fallback")
 print(f"[Server] 3d-tiles-tools : {TOOLS['tiles_tools_path']}")
 print(f"[Server] gltf-transform : {TOOLS['gltf_transform_path']}")
 print(f"[Server] Config         : {CONFIG_PATH}")
@@ -832,6 +1025,7 @@ print(f"  Viewer   : http://localhost:{PORT}/index.html")
 print(f"  Status   : http://localhost:{PORT}/status")
 print(f"  API      : http://localhost:{PORT}/api/models")
 print(f"  Scene    : http://localhost:{PORT}/scene/tileset.json")
+print(f"  CityDB   : http://localhost:{PORT}/api/citydb/test")
 print("  Press Ctrl+C to stop")
 print("")
 

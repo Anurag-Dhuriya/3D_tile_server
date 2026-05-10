@@ -1,0 +1,61 @@
+{
+  "databaseOptions": {
+    "connections": {
+      "local_citydb": {
+        "host": "localhost",
+        "port": 5432,
+        "database": "citydb",
+        "schema": "ahmedabad_city",
+        "user": "postgres",
+        "password": "postgres",
+        "poolOptions": {
+          "loginTimeout": 120
+        }
+      }
+    },
+    "defaultConnection": "local_citydb"
+  },
+  "importOptions": {
+    "mode": "importAll",
+    "indexMode": "dropCreate",
+    "failFast": true,
+    "numberOfThreads": 4
+  },
+  "readOptions": {
+    "failFast": true,
+    "numberOfThreads": 4,
+    "computeEnvelopes": true,
+    "formatOptions": {
+      "CityGML": {
+        "appearanceOptions": {
+          "readAppearances": true
+        }
+      }
+    }
+  },
+  "exportOptions": {
+    "numberOfThreads": 4,
+    "tiling": {
+      "tileMatrixOrigin": "topLeft",
+      "scheme": {
+        "type": "Dimension",
+        "width": {
+          "value": 500.0
+        },
+        "height": {
+          "value": 500.0
+        }
+      }
+    }
+  },
+  "writeOptions": {
+    "failFast": true,
+    "numberOfThreads": 4,
+    "formatOptions": {
+      "CityGML": {
+        "version": "3.0",
+        "prettyPrint": true
+      }
+    }
+  }
+}

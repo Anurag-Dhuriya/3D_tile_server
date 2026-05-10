@@ -1,0 +1,50 @@
+First do a manual 3DCityDB smoke test before involving the server.
+/absolute/path/to/citydb import citygml \
+  --config-file=/Users/anuragdhuriya/Desktop/3D_tile_server/citydb-config.json \
+  /Users/anuragdhuriya/Desktop/3D_tile_server/uploads/ahmedabad.gml
+
+Export tiled CityGML:
+/absolute/path/to/citydb export citygml \
+  --config-file=/Users/anuragdhuriya/Desktop/3D_tile_server/citydb-config.json \
+  --output=/Users/anuragdhuriya/Desktop/3D_tile_server/tmp_citydb_tiles/@column@/tile_@row@.gml
+
+If that works, run your server:
+cd /Users/anuragdhuriya/Desktop/3D_tile_server
+source venv/bin/activate
+python3 server.py
+
+
+Then process only the DB-backed model:
+curl -X POST http://localhost:8080/api/models/ahmedabad_city/process
+
+3. Verify
+
+Use this checklist:
+
+Manual citydb import citygml finishes without DB/auth/schema errors.
+Manual citydb export citygml creates tiled .gml files under /Users/anuragdhuriya/Desktop/3D_tile_server/tmp_citydb_tiles.
+Server status moves through citydb_import, citydb_export, processing_citydb_tile, and building_tileset.
+Final tileset exists at tileset.json.
+Viewer loads ahmedabad_city from index.html.
+
+TEST:-
+start server
+open:
+http://localhost:8080/api/citydb/test
+see whether DB connection and export config are working
+only then run the real model processing
+
+How to use the new endpoint:
+
+Auto-pick the first 3DCityDB-backed model:
+http://localhost:8080/api/citydb/test
+Test a specific model:
+http://localhost:8080/api/citydb/test?model=ahmedabad_city
+Keep the exported test tiles on disk for inspection:
+http://localhost:8080/api/citydb/test?model=ahmedabad_city&keep=1
+What it tells you:
+
+whether citydb-tool is reachable
+whether the DB/schema settings are valid
+whether tiled CityGML export works
+how many test tiles were produced
